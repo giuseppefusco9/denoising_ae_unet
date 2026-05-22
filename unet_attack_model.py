@@ -29,19 +29,23 @@ class UpBlock(nn.Module):
             nn.ReLU(inplace=True)
         )
 
-    def forward(self, x, skip):
-        x = self.up(x)
-        
-        # Gestione del padding per evitare mismatch dovuti a input non divisibili perfettamente
-        diffY = skip.size()[2] - x.size()[2]
-        diffX = skip.size()[3] - x.size()[3]
-        if diffY > 0 or diffX > 0:
-            import torch.nn.functional as F
-            x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
-            
-        x = self.conv_trans(x)
-        concat = torch.cat([x, skip], dim=1) # Concatenazione lungo i canali (Skip Connection)
-        return self.conv(concat)
+        def forward(self, x, skip):
+                # 1. Applica prima l'Upsampling spaziale
+                x = self.up(x)
+                
+                # 2. Calcola e applica il padding spaziale SE ALTEZZA O LARGHEZZA NON COINCIDONO
+                diffY = skip.size()[2] - x.size()[2]
+                diffX = skip.size()[3] - x.size()[3]
+                if diffY > 0 or diffX > 0:
+                    import torch.nn.functional as F
+                    x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
+                    
+                # 3. Riduci i canali dopo aver allineato le dimensioni spaziali
+                x = self.conv_trans(x)
+                
+                # 4. Esegui la concatenazione (Skip Connection)
+                concat = torch.cat([x, skip], dim=1)
+                return self.conv(concat)
 
 class UNetDenoiseAttack(nn.Module):
     def __init__(self, in_channels=3, out_channels=3):
