@@ -1,0 +1,14 @@
+# Ambienti virtuali
+venv/
+.env
+
+# Cartelle dati e pesi dei modelli
+checkpoints/
+
+# File temporanei di Python e Mac
+__pycache__/
+*.pyc
+.DS_Store
+
+# File CSV di output (opzionale, toglilo se vuoi caricare i risultati)
+ckpts/
