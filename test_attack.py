@@ -5,7 +5,7 @@ import videoseal
 import os
 import pandas as pd
 import math
-from conv_ae_model import ConvAutoencoderDenoise
+from unet_attack_model import ConvAutoencoderDenoise
 
 # ==========================================
 # 1. CONFIGURAZIONE DEL TEST

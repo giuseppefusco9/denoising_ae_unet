@@ -1,6 +1,6 @@
 import torch
 from torchinfo import summary
-from conv_ae_model import ConvAutoencoderDenoise
+from unet_attack_model import ConvAutoencoderDenoise
 
 # 1. Inizializza il tuo modello
 model = ConvAutoencoderDenoise(in_channels=3, out_channels=3)
