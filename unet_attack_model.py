@@ -21,36 +21,6 @@ class UpBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(UpBlock, self).__init__()
         self.up = nn.Upsample(scale_factor=2, mode='nearest')
-        # CORREZIONE: kernel_size=1 e padding=0 mantiene inalterate H e W (es. 32x32 rimane 32x32)
-        self.conv_trans = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0) 
-        self.conv = nn.Sequential(
-            nn.Conv2d(out_channels * 2, out_channels, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True)
-        )
-
-    def forward(self, x, skip):
-        # 1. Espansione spaziale (es. da 16x16 a 32x32)
-        x = self.up(x)
-        
-        # 2. Riduzione dei canali (mantiene 32x32)
-        x = self.conv_trans(x)
-        
-        # 3. Controllo di sicurezza per il padding (in caso di input dispari nel dataset)
-        diffY = skip.size()[2] - x.size()[2]
-        diffX = skip.size()[3] - x.size()[3]
-        if diffY > 0 or diffX > 0:
-            import torch.nn.functional as F
-            x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
-            
-        # 4. Concatenazione perfetta
-        concat = torch.cat([x, skip], dim=1)
-        return self.conv(concat)
-    
-    def __init__(self, in_channels, out_channels):
-        super(UpBlock, self).__init__()
-        self.up = nn.Upsample(scale_factor=2, mode='nearest')
         self.conv_trans = nn.Conv2d(in_channels, out_channels, kernel_size=2, padding=0) # Dimezza i canali prima del concat
         self.conv = nn.Sequential(
             nn.Conv2d(out_channels * 2, out_channels, kernel_size=3, padding=1),
@@ -60,21 +30,17 @@ class UpBlock(nn.Module):
         )
 
     def forward(self, x, skip):
-        # 1. Applica prima l'Upsampling spaziale
         x = self.up(x)
         
-        # 2. Calcola e applica il padding spaziale SE ALTEZZA O LARGHEZZA NON COINCIDONO
+        # Gestione del padding per evitare mismatch dovuti a input non divisibili perfettamente
         diffY = skip.size()[2] - x.size()[2]
         diffX = skip.size()[3] - x.size()[3]
         if diffY > 0 or diffX > 0:
             import torch.nn.functional as F
             x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
             
-        # 3. Riduci i canali dopo aver allineato le dimensioni spaziali
         x = self.conv_trans(x)
-        
-        # 4. Esegui la concatenazione (Skip Connection)
-        concat = torch.cat([x, skip], dim=1)
+        concat = torch.cat([x, skip], dim=1) # Concatenazione lungo i canali (Skip Connection)
         return self.conv(concat)
 
 class UNetDenoiseAttack(nn.Module):
