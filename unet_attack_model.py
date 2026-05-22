@@ -20,8 +20,10 @@ class DownBlock(nn.Module):
 class UpBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(UpBlock, self).__init__()
+        # 1. Fa l'upsampling geometrico (raddoppia H e W)
         self.up = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv_trans = nn.Conv2d(in_channels, out_channels, kernel_size=2, padding=0) # Dimezza i canali prima del concat
+        # 2. Correzione: kernel_size=3 e padding=1 conserva la dimensione spaziale (es. 32x32 rimane 32x32)
+        self.conv_trans = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1) 
         self.conv = nn.Sequential(
             nn.Conv2d(out_channels * 2, out_channels, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
@@ -31,23 +33,17 @@ class UpBlock(nn.Module):
 
     def forward(self, x, skip):
         x = self.up(x)
-        
-        # Gestione del padding per evitare mismatch dovuti a input non divisibili perfettamente
-        diffY = skip.size()[2] - x.size()[2]
-        diffX = skip.size()[3] - x.size()[3]
-        if diffY > 0 or diffX > 0:
-            import torch.nn.functional as F
-            x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
-            
         x = self.conv_trans(x)
-        concat = torch.cat([x, skip], dim=1) # Concatenazione lungo i canali (Skip Connection)
+        
+        # Concatenazione perfetta lungo i canali
+        concat = torch.cat([x, skip], dim=1)
         return self.conv(concat)
 
 class UNetDenoiseAttack(nn.Module):
     def __init__(self, in_channels=3, out_channels=3):
         super(UNetDenoiseAttack, self).__init__()
         
-        # Ridotto la complessità di base [8, 16, 32, 64, 128] come nel tuo notebook per addestrare velocemente su 1080Ti
+        # Configurazione filtri simmetrica [8, 16, 32, 64, 128]
         self.down1 = DownBlock(in_channels, 8)
         self.down2 = DownBlock(8, 16)
         self.down3 = DownBlock(16, 32)
@@ -67,7 +63,7 @@ class UNetDenoiseAttack(nn.Module):
         self.up3 = UpBlock(32, 16)
         self.up4 = UpBlock(16, 8)
         
-        # Output Layer
+        # Output Reconstruction
         self.out_conv = nn.Sequential(
             nn.Conv2d(8, out_channels, kernel_size=1),
             nn.Sigmoid()
@@ -94,4 +90,3 @@ if __name__ == "__main__":
     output = model(dummy_input)
     print(f"Input U-Net Shape: {dummy_input.shape}")
     print(f"Output U-Net Shape: {output.shape}")
-    print("Modello U-Net istanziato con successo per lo scenario avversariale.")
