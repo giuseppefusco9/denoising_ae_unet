@@ -5,7 +5,7 @@ import videoseal
 import os
 import pandas as pd
 import math
-from unet_attack_model import ConvAutoencoderDenoise
+from unet_attack_model import UNetDenoiseAttack
 
 # ==========================================
 # 1. CONFIGURAZIONE DEL TEST
@@ -14,8 +14,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 INPUT_DIR = "dataset_minSize/test" 
 
-OUTPUT_DIR = "results_convae_mse"
-CSV_FILE = "risultati_convae_mse_raptor.csv"
+OUTPUT_DIR = "results_unet"
+CSV_FILE = "risultati_unet_raptor.csv"
 msg_size = 256
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -23,11 +23,11 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ==========================================
 # 2. CARICAMENTO E PULIZIA PESI MULTI-GPU
 # ==========================================
-print("Caricamento ConvAutoencoder su raptor01...")
-model = ConvAutoencoderDenoise(in_channels=3, out_channels=3).to(device)
+print("Caricamento UNet su raptor01...")
+model = UNetDenoiseAttack(in_channels=3, out_channels=3).to(device)
 
 # Carichiamo i pesi addestrati
-state_dict = torch.load("checkpoints/convae_mse_best.pth", map_location=device, weights_only=True)
+state_dict = torch.load("checkpoints/unet_best.pth", map_location=device, weights_only=True)
 
 from collections import OrderedDict
 new_state_dict = OrderedDict()
