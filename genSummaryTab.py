@@ -1,9 +1,9 @@
 import torch
 from torchinfo import summary
-from unet_attack_model import ConvAutoencoderDenoise
+from unet_attack_model import UNetDenoiseAttack
 
 # 1. Inizializza il tuo modello
-model = ConvAutoencoderDenoise(in_channels=3, out_channels=3)
+model = UNetDenoiseAttack(in_channels=3, out_channels=3)
 
 # 2. Definisci la grandezza di un'immagine in input finta (Batch, Canali, Altezza, Larghezza)
 dimensione_input = (1, 3, 256, 256)

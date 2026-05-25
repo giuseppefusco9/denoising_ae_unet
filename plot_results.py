@@ -6,7 +6,7 @@ from sklearn.metrics import roc_curve, auc
 # ==========================================
 # 1. CONFIGURAZIONE
 # ==========================================
-CSV_FILE = "risultati_convae_mse_raptor.csv" 
+CSV_FILE = "risultati_unet_raptor.csv" 
 COLONNA_SCORE = 'bit accuracy' 
 
 # Impostiamo lo stile bianco con griglia, come nella tua immagine
@@ -40,13 +40,13 @@ sns.histplot(data=df_wm, x=COLONNA_SCORE, color='dodgerblue', label='Watermarked
 
 plt.xlabel("Bit Accuracy (0.0 = 0%, 1.0 = 100%)", fontsize=11)
 plt.ylabel("Numero di Immagini", fontsize=11)
-plt.title("Istogramma Bit Accuracy: Immagini Pulite, Watermarked e Attaccate - Attacco ConvAE (MSE)", fontsize=13, pad=15)
+plt.title("Istogramma Bit Accuracy: Immagini Pulite, Watermarked e Attaccate - Attacco UNet", fontsize=13, pad=15)
 
 legend = plt.legend(title="Legenda Stati", loc="upper left", frameon=True, shadow=True, facecolor='white')
 legend.get_frame().set_edgecolor('gray')
 
 plt.tight_layout()
-NOME_HIST = 'Istogramma_BitAccuracy_ConvAE_MSE.png'
+NOME_HIST = 'Istogramma_BitAccuracy_UNet.png'
 plt.savefig(NOME_HIST)
 plt.close()
 
@@ -74,7 +74,7 @@ fpr_att, tpr_att, _ = roc_curve(y_true_att, y_score_att)
 roc_auc_att = auc(fpr_att, tpr_att)
 
 plt.plot(fpr_att, tpr_att, color='crimson', lw=3, linestyle='--',
-         label=f'Attacco ConvAE (Loss MSE) - AUC: {roc_auc_att:.4f}')
+         label=f'Attacco UNet - AUC: {roc_auc_att:.4f}')
 
 
 # Impostazioni Assi
@@ -82,11 +82,11 @@ plt.xlim([-0.01, 1.0])
 plt.ylim([0.0, 1.05])
 plt.xlabel('False Positive Rate (FPR) - Falsi Allarmi', fontsize=12)
 plt.ylabel('True Positive Rate (TPR) - Rilevamenti Corretti', fontsize=12)
-plt.title('Curva ROC: Robustezza di PixelSeal contro Attacco ConvAE (MSE)', fontsize=14, pad=15)
+plt.title('Curva ROC: Robustezza di PixelSeal contro Attacco UNet', fontsize=14, pad=15)
 plt.legend(loc="lower right", fontsize=11, frameon=True, shadow=True)
 
 plt.tight_layout()
-NOME_ROC = 'Curva_ROC_ConvAE_MSE.png'
+NOME_ROC = 'Curva_ROC_UNet.png'
 plt.savefig(NOME_ROC)
 plt.close()
 
