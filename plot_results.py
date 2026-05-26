@@ -9,7 +9,7 @@ from sklearn.metrics import roc_curve, auc
 CSV_FILE = "risultati_unet_raptor.csv" 
 COLONNA_SCORE = 'bit accuracy' 
 
-# Impostiamo lo stile bianco con griglia, come nella tua immagine
+# Impostiamo lo stile bianco con griglia
 sns.set_theme(style="whitegrid")
 
 # ==========================================
@@ -18,32 +18,56 @@ sns.set_theme(style="whitegrid")
 print("📊 Lettura del file CSV in corso...")
 df = pd.read_csv(CSV_FILE, sep=';')
 
-# Dividiamo i dati nei tre stati
+# Filtriamo o mappiamo i nomi esatti dello 'stato' per la legenda
+# (Assicurati che nel CSV i valori siano esattamente 'Pulita', 'Attaccata', 'Watermarked')
 df_pulite = df[df['stato'] == 'Pulita'] 
 df_wm = df[df['stato'] == 'Watermarked']
 df_att = df[df['stato'] == 'Attaccata'] 
 
 # ==========================================
-# 3. GRAFICO 1: ISTOGRAMMA (STILE IMMAGINE ALLEGATA)
+# 3. GRAFICO 1: ISTOGRAMMA
 # ==========================================
-print("📈 Generazione Istogramma...")
+print("📈 Generazione Istogramma Impilato...")
 plt.figure(figsize=(10, 6), dpi=300)
 
-sns.histplot(data=df_pulite, x=COLONNA_SCORE, color='limegreen', label='Pulita (Nessun WM)', 
-             bins=60, binrange=(0.4, 1.0), edgecolor='black', alpha=0.9)
+color_palette = {
+    'Pulita': 'limegreen',
+    'Attaccata': 'crimson',
+    'Watermarked': 'dodgerblue'
+}
 
-sns.histplot(data=df_att, x=COLONNA_SCORE, color='crimson', label='Attaccata (Danneggiata)', 
-             bins=60, binrange=(0.4, 1.0), edgecolor='black', alpha=0.9)
+labels_mappate = {
+    'Pulita': 'Pulita (Nessun WM)',
+    'Attaccata': 'Attaccata (Danneggiata)',
+    'Watermarked': 'Watermarked (Intatta)'
+}
+df_plot = df.copy()
+df_plot['stato'] = df_plot['stato'].map(labels_mappate)
 
-sns.histplot(data=df_wm, x=COLONNA_SCORE, color='dodgerblue', label='Watermarked (Intatta)', 
-             bins=60, binrange=(0.4, 1.0), edgecolor='black', alpha=0.9)
+palette_formale = {labels_mappate[k]: v for k, v in color_palette.items()}
+
+sns.histplot(
+    data=df_plot, 
+    x=COLONNA_SCORE, 
+    hue='stato', 
+    multiple='stack',
+    palette=palette_formale,
+    bins=60, 
+    binrange=(0.4, 1.0), 
+    edgecolor='black', 
+    alpha=0.9
+)
 
 plt.xlabel("Bit Accuracy (0.0 = 0%, 1.0 = 100%)", fontsize=11)
 plt.ylabel("Numero di Immagini", fontsize=11)
 plt.title("Istogramma Bit Accuracy: Immagini Pulite, Watermarked e Attaccate - Attacco UNet", fontsize=13, pad=15)
 
-legend = plt.legend(title="Legenda Stati", loc="upper left", frameon=True, shadow=True, facecolor='white')
+legend = plt.gca().get_legend()
+legend.set_title("Legenda Stati")
+legend.set_bbox_to_anchor((0.02, 0.98))
+legend.get_frame().set_facecolor('white')
 legend.get_frame().set_edgecolor('gray')
+legend.get_frame().set_linewidth(1)
 
 plt.tight_layout()
 NOME_HIST = 'Istogramma_BitAccuracy_UNet.png'
@@ -51,7 +75,7 @@ plt.savefig(NOME_HIST)
 plt.close()
 
 # ==========================================
-# 4. GRAFICO 2: CURVA ROC
+# 4. GRAFICO 2: CURVA ROC 
 # ==========================================
 print("📈 Generazione Curva ROC...")
 plt.figure(figsize=(9, 7), dpi=300)
@@ -66,7 +90,7 @@ roc_auc_base = auc(fpr_base, tpr_base)
 plt.plot(fpr_base, tpr_base, color='dodgerblue', lw=3, 
          label=f'Baseline (Pulite vs Intatte) - AUC: {roc_auc_base:.4f}')
 
-# --- B. Attacco (Pulite vs Attaccate ConvAE) ---
+# --- B. Attacco (Pulite vs Attaccate) ---
 y_true_att = [0] * len(df_pulite) + [1] * len(df_att)
 y_score_att = list(df_pulite[COLONNA_SCORE]) + list(df_att[COLONNA_SCORE])
 
@@ -75,7 +99,6 @@ roc_auc_att = auc(fpr_att, tpr_att)
 
 plt.plot(fpr_att, tpr_att, color='crimson', lw=3, linestyle='--',
          label=f'Attacco UNet - AUC: {roc_auc_att:.4f}')
-
 
 # Impostazioni Assi
 plt.xlim([-0.01, 1.0])
