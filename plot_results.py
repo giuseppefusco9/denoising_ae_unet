@@ -9,7 +9,6 @@ from sklearn.metrics import roc_curve, auc
 CSV_FILE = "risultati_unet_raptor.csv" 
 COLONNA_SCORE = 'bit accuracy' 
 
-# Impostiamo lo stile bianco con griglia
 sns.set_theme(style="whitegrid")
 
 # ==========================================
@@ -18,8 +17,7 @@ sns.set_theme(style="whitegrid")
 print("📊 Lettura del file CSV in corso...")
 df = pd.read_csv(CSV_FILE, sep=';')
 
-# Filtriamo o mappiamo i nomi esatti dello 'stato' per la legenda
-# (Assicurati che nel CSV i valori siano esattamente 'Pulita', 'Attaccata', 'Watermarked')
+# Dividiamo i dati nei tre stati
 df_pulite = df[df['stato'] == 'Pulita'] 
 df_wm = df[df['stato'] == 'Watermarked']
 df_att = df[df['stato'] == 'Attaccata'] 
@@ -62,12 +60,19 @@ plt.xlabel("Bit Accuracy (0.0 = 0%, 1.0 = 100%)", fontsize=11)
 plt.ylabel("Numero di Immagini", fontsize=11)
 plt.title("Istogramma Bit Accuracy: Immagini Pulite, Watermarked e Attaccate - Attacco UNet", fontsize=13, pad=15)
 
-legend = plt.gca().get_legend()
-legend.set_title("Legenda Stati")
-legend.set_bbox_to_anchor((0.02, 0.98))
-legend.get_frame().set_facecolor('white')
-legend.get_frame().set_edgecolor('gray')
-legend.get_frame().set_linewidth(1)
+# --- LEGENDA ISTOGRAMMA ---
+legend_src = plt.gca().get_legend()
+plt.legend(
+    handles=legend_src.legend_handles, 
+    labels=[t.get_text() for t in legend_src.get_texts()],
+    title="Legenda Stati",
+    loc="upper left",
+    bbox_to_anchor=(0.02, 0.98),
+    frameon=True, 
+    shadow=True, 
+    facecolor='white',
+    edgecolor='gray'
+)
 
 plt.tight_layout()
 NOME_HIST = 'Istogramma_BitAccuracy_UNet.png'
@@ -100,13 +105,12 @@ roc_auc_att = auc(fpr_att, tpr_att)
 plt.plot(fpr_att, tpr_att, color='crimson', lw=3, linestyle='--',
          label=f'Attacco UNet - AUC: {roc_auc_att:.4f}')
 
-# Impostazioni Assi
 plt.xlim([-0.01, 1.0])
 plt.ylim([0.0, 1.05])
 plt.xlabel('False Positive Rate (FPR) - Falsi Allarmi', fontsize=12)
 plt.ylabel('True Positive Rate (TPR) - Rilevamenti Corretti', fontsize=12)
 plt.title('Curva ROC: Robustezza di PixelSeal contro Attacco UNet', fontsize=14, pad=15)
-plt.legend(loc="lower right", fontsize=11, frameon=True, shadow=True)
+plt.legend(loc="lower right", fontsize=11, frameon=True, shadow=True, facecolor='white', edgecolor='gray')
 
 plt.tight_layout()
 NOME_ROC = 'Curva_ROC_UNet.png'
