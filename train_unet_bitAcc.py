@@ -27,7 +27,7 @@ CROP_SIZE = 256
 
 # IPERPARAMETRI DI BILANCIAMENTO DELLA LOSS MULTI-TASK
 ALPHA = 1.0   # Peso per la fedeltà dell'immagine (L1 Loss)
-LAMBDA = 0.1  # Peso per la rimozione del watermark (PixelSeal Score)
+LAMBDA = 0.1  # Peso per l'attacco avversariale surrogato della Bit Accuracy
 
 # ==========================================
 # 2. PREPARAZIONE DATI
@@ -42,11 +42,11 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_w
 print(f"Dati Caricati: {len(train_dataset)} Train | {len(val_dataset)} Val.")
 
 # ==========================================
-# 3. INIZIALIZZAZIONE MODELLI E DETECTOR CONGELATO
+# 3. INIZIALIZZAZIONE MODELLI E FUNZIONI DI COSTO
 # ==========================================
 model = UNetDenoiseAttack(in_channels=3, out_channels=3).to(device)
 
-# --- Caricamento e congelamento del Detector PixelSeal ---
+# Caricamento e congelamento del Detector PixelSeal
 print("Caricamento detector PixelSeal...")
 detector = videoseal.load("pixelseal")
 detector.to(device)
@@ -55,7 +55,11 @@ detector.eval()
 for param in detector.parameters():
     param.requires_grad = False
 
+# Loss di Fedeltà spaziale (L1 preserva i dettagli meglio dell'MSE)
 criterion_fidelity = nn.L1Loss().to(device)
+
+# Funzione surrogata differenziabile per simulare la Bit Accuracy (BCE sui singoli bit)
+criterion_bce = nn.BCEWithLogitsLoss().to(device)
 
 if num_gpus > 1:
     model = nn.DataParallel(model)
@@ -73,7 +77,7 @@ val_loss_history = []
 # ==========================================
 # 5. TRAINING LOOP AVVERSARIALE
 # ==========================================
-print(f"\nInizio Addestramento (L1 Fidelity * {ALPHA} + PixelSeal Score * {LAMBDA})...\n")
+print(f"\nInizio Addestramento (L1 Fidelity * {ALPHA} + Soft Bit-Accuracy BCE * {LAMBDA})...\n")
 
 best_val_loss = float('inf')
 
@@ -87,20 +91,35 @@ for epoch in range(EPOCHS):
         
         optimizer.zero_grad()
         
-        # 1. Forward pass attraverso la nostra U-Net articolata
+        # 1. Forward pass attraverso la U-Net articolata (Output RGB 3 canali)
         reconstructed_imgs = model(wm_imgs)
         
-        # 2. Calcolo della Loss di Fedeltà (L1 rispetto all'immagine pulita originale)
+        # 2. Calcolo della Loss di Fedeltà Visiva
         loss_fid = criterion_fidelity(reconstructed_imgs, clean_imgs)
         
-        # 3. Calcolo della Loss Avversariale (Esecuzione del detector congelato sull'output)
-        # Il detector estrae i logiti di presenza del watermark. Più sono alti, più è sicuro.
+        # 3. Estrazione dell'output del detector dall'immagine sotto attacco
         detector_outputs = detector.detect(reconstructed_imgs)
-        detector_logits = detector_outputs["preds"][:, 0]  # Indice 0 rappresenta lo score del watermark
         
-        # Massimizziamo l'errore del detector (forzando lo score a scendere verso o sotto lo zero)
-        # Usiamo un clamp morbido per spingere i logiti nella zona di incertezza negativa
-        loss_adv = torch.mean(torch.clamp(detector_logits + 2.0, min=0.0))
+        # Gestione dinamica dei canali di output del messaggio di PixelSeal
+        if "messages" in detector_outputs:
+            # Estraiamo i logiti dei singoli bit predetti dal decoder di Meta
+            detected_bit_logits = detector_outputs["messages"] 
+            
+            # Estraiamo i bit target reali dall'immagine originale (senza gradienti)
+            with torch.no_grad():
+                original_outputs = detector.detect(wm_imgs)
+                original_payloads = original_outputs["messages"].detach()
+            
+            # Strategia Avversariale: calcoliamo i bit invertiti (1.0 - probabilità_bit)
+            # per addestrare la U-Net a massimizzare l'errore del codice di estrazione
+            inverse_payloads = 1.0 - torch.sigmoid(original_payloads)
+            
+            # La BCE funge da approssimazione continua e differenziabile della Bit Accuracy
+            loss_adv = criterion_bce(detected_bit_logits, inverse_payloads)
+        else:
+            # Fallback robusto sul logit globale C0 se l'array dei messaggi non è esposto direttamente
+            detector_logits = detector_outputs["preds"][:, 0]
+            loss_adv = torch.mean(torch.clamp(detector_logits + 2.0, min=0.0))
         
         # Loss Totale Combinata
         total_loss = (ALPHA * loss_fid) + (LAMBDA * loss_adv)
@@ -129,8 +148,15 @@ for epoch in range(EPOCHS):
             loss_fid = criterion_fidelity(reconstructed_imgs, clean_imgs)
             
             detector_outputs = detector.detect(reconstructed_imgs)
-            detector_logits = detector_outputs["preds"][:, 0]
-            loss_adv = torch.mean(torch.clamp(detector_logits + 2.0, min=0.0))
+            
+            if "messages" in detector_outputs:
+                detected_bit_logits = detector_outputs["messages"]
+                original_payloads = detector.detect(wm_imgs)["messages"].detach()
+                inverse_payloads = 1.0 - torch.sigmoid(original_payloads)
+                loss_adv = criterion_bce(detected_bit_logits, inverse_payloads)
+            else:
+                detector_logits = detector_outputs["preds"][:, 0]
+                loss_adv = torch.mean(torch.clamp(detector_logits + 2.0, min=0.0))
             
             total_val_loss = (ALPHA * loss_fid) + (LAMBDA * loss_adv)
             if num_gpus > 1:
@@ -167,7 +193,7 @@ ax1.set_xlabel('Epochs')
 ax1.set_ylabel('Loss Combinata Avversariale')
 ax1.grid(True, linestyle=":")
 ax1.legend(loc='upper right')
-ax1.set_title('Andamento Loss Bilanciata (L1 + PixelSeal Detector Score) - U-Net')
+ax1.set_title('Andamento Loss Bilanciata (L1 + Soft Bit-Accuracy BCE) - U-Net')
 plt.savefig("unet_loss_plot.png", dpi=300, bbox_inches='tight')
 plt.close()
 print("Grafici e log salvati con successo.")

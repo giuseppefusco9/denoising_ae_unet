@@ -111,4 +111,4 @@ class UNetDenoiseAttack(nn.Module):
         # 4. Riassemblaggio finale in RGB usando i canali cromatici originari immutati
         rgb_output = self.ycbcr_to_rgb(y_reconstructed, cb, cr)
         
-        return rgb_output # Volume CORRETTO (3, 256, 256)
+        return rgb_output # Volume (3, 256, 256)

@@ -2,24 +2,23 @@ import torch
 from torchinfo import summary
 from unet_attack_model import UNetDenoiseAttack
 
-# 1. Inizializza il tuo modello
-model = UNetDenoiseAttack(in_channels=3, out_channels=3)
+# 1. Configurazione hardware minima
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 2. Definisci la grandezza di un'immagine in input finta (Batch, Canali, Altezza, Larghezza)
-dimensione_input = (1, 3, 256, 256)
+# 2. Inizializzazione del modello
+model = UNetDenoiseAttack(in_channels=3, out_channels=3).to(device)
 
-print("\n" + "="*60)
-print(" SUMMARY DELL'AUTOENCODER ")
-print("="*60)
-
-# 3. Genera e stampa la tabella esatta
-# Passiamo col_names per forzare le colonne identiche a quelle della tua foto
-statistiche = summary(
+# 3. Generazione del report
+model_summary = summary(
     model, 
-    input_size=dimensione_input,
-    col_names=["output_size", "num_params"],
-    col_width=20,
-    row_settings=["var_names"]
+    input_size=(32, 3, 256, 256), 
+    col_names=["input_size", "output_size", "num_params", "kernel_size"],
+    depth=3,
+    verbose=0
 )
 
-print(statistiche)
+# 4. Scrittura del file summary.txt
+with open("summary.txt", "w", encoding="utf-8") as f:
+    f.write(str(model_summary))
+
+print("✅ File summary.txt generato con successo in 'summary.txt'!")
