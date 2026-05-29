@@ -5,8 +5,8 @@ from torch.utils.data import DataLoader
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+import videoseal 
 
-# Importiamo il dataloader e il modello
 from loader_dataset import WatermarkDenoisingDataset
 from unet_attack_model import UNetDenoiseAttack
 
@@ -25,6 +25,10 @@ EPOCHS = 60
 LEARNING_RATE = 2e-4 
 CROP_SIZE = 256      
 
+# IPERPARAMETRI DI BILANCIAMENTO DELLA LOSS MULTI-TASK
+ALPHA = 1.0   # Peso per la fedeltà dell'immagine (L1 Loss)
+LAMBDA = 0.1  # Peso per la rimozione del watermark (PixelSeal Score)
+
 # ==========================================
 # 2. PREPARAZIONE DATI
 # ==========================================
@@ -38,10 +42,20 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_w
 print(f"Dati Caricati: {len(train_dataset)} Train | {len(val_dataset)} Val.")
 
 # ==========================================
-# 3. INIZIALIZZAZIONE MODELLO E LOSS MSE
+# 3. INIZIALIZZAZIONE MODELLI E DETECTOR CONGELATO
 # ==========================================
 model = UNetDenoiseAttack(in_channels=3, out_channels=3).to(device)
-criterion = nn.MSELoss().to(device)
+
+# --- Caricamento e congelamento del Detector PixelSeal ---
+print("Caricamento detector PixelSeal (I pesi rimarranno CONGELATI)...")
+detector = videoseal.load("pixelseal")
+detector.to(device)
+detector.eval()
+
+for param in detector.parameters():
+    param.requires_grad = False
+
+criterion_fidelity = nn.L1Loss().to(device)
 
 if num_gpus > 1:
     model = nn.DataParallel(model)
@@ -51,15 +65,15 @@ optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 os.makedirs("checkpoints", exist_ok=True)
 
 # ==========================================
-# 4. STORICO DEL TRAINING (Le nostre liste History)
+# 4. STORICO DEL TRAINING
 # ==========================================
 train_loss_history = []
 val_loss_history = []
 
 # ==========================================
-# 5. TRAINING LOOP
+# 5. TRAINING LOOP AVVERSARIALE
 # ==========================================
-print("\nInizio Addestramento con Loss MSE...\n")
+print(f"\nInizio Addestramento (L1 Fidelity * {ALPHA} + PixelSeal Score * {LAMBDA})...\n")
 
 best_val_loss = float('inf')
 
@@ -73,16 +87,31 @@ for epoch in range(EPOCHS):
         
         optimizer.zero_grad()
         
+        # 1. Forward pass attraverso la nostra U-Net articolata
         reconstructed_imgs = model(wm_imgs)
-        loss = criterion(reconstructed_imgs, clean_imgs)
+        
+        # 2. Calcolo della Loss di Fedeltà (L1 rispetto all'immagine pulita originale)
+        loss_fid = criterion_fidelity(reconstructed_imgs, clean_imgs)
+        
+        # 3. Calcolo della Loss Avversariale (Esecuzione del detector congelato sull'output)
+        # Il detector estrae i logiti di presenza del watermark. Più sono alti, più è sicuro.
+        detector_outputs = detector.detect(reconstructed_imgs)
+        detector_logits = detector_outputs["preds"][:, 0]  # Indice 0 rappresenta lo score del watermark
+        
+        # Massimizziamo l'errore del detector (forzando lo score a scendere verso o sotto lo zero)
+        # Usiamo un clamp morbido per spingere i logiti nella zona di incertezza negativa
+        loss_adv = torch.mean(torch.clamp(detector_logits + 2.0, min=0.0))
+        
+        # Loss Totale Combinata
+        total_loss = (ALPHA * loss_fid) + (LAMBDA * loss_adv)
         
         if num_gpus > 1:
-            loss = loss.mean()
+            total_loss = total_loss.mean()
             
-        loss.backward()
+        total_loss.backward()
         optimizer.step()
         
-        train_loss += loss.item()
+        train_loss += total_loss.item()
         
     avg_train_loss = train_loss / len(train_loader)
     train_loss_history.append(avg_train_loss)
@@ -96,12 +125,17 @@ for epoch in range(EPOCHS):
             clean_imgs = clean_imgs.to(device)
             
             reconstructed_imgs = model(wm_imgs)
-            loss = criterion(reconstructed_imgs, clean_imgs)
             
+            loss_fid = criterion_fidelity(reconstructed_imgs, clean_imgs)
+            
+            detector_outputs = detector.detect(reconstructed_imgs)
+            detector_logits = detector_outputs["preds"][:, 0]
+            loss_adv = torch.mean(torch.clamp(detector_logits + 2.0, min=0.0))
+            
+            total_val_loss = (ALPHA * loss_fid) + (LAMBDA * loss_adv)
             if num_gpus > 1:
-                loss = loss.mean()
-                
-            val_loss += loss.item()
+                total_val_loss = total_val_loss.mean()
+            val_loss += total_val_loss.item()
             
     avg_val_loss = val_loss / len(val_loader)
     val_loss_history.append(avg_val_loss)
@@ -112,43 +146,28 @@ for epoch in range(EPOCHS):
         best_val_loss = avg_val_loss
         state_dict_to_save = model.module.state_dict() if num_gpus > 1 else model.state_dict()
         torch.save(state_dict_to_save, "checkpoints/unet_best.pth")
-        print("Nuovo record: Modello salvato.")
+        print("Nuovo record di validazione avversariale: Modello salvato.")
 
 print("\nAddestramento Completato.")
 
 # ==========================================
-# 6. SALVATAGGIO SUMMARY (File CSV)
+# 6. SALVATAGGIO SUMMARY ED ELABORAZIONE GRAFICA
 # ==========================================
-print("\nSalvataggio del Summary in corso...")
 summary_df = pd.DataFrame({
     "Epoca": range(1, EPOCHS + 1),
     "Train_Loss": train_loss_history,
     "Val_Loss": val_loss_history
 })
-summary_file = "checkpoints/unet_summary.csv"
-summary_df.to_csv(summary_file, index=False, sep=";")
-print(f"Summary salvato con successo in: {summary_file}")
+summary_df.to_csv("unet_summary.csv", index=False, sep=";")
 
-# ==========================================
-# 7. GENERAZIONE E SALVATAGGIO GRAFICO
-# ==========================================
-print("Generazione del grafico della Loss...")
 fig, ax1 = plt.subplots(figsize=(10, 8))
-
-line1, = ax1.plot(range(1, EPOCHS + 1), train_loss_history, label='train_loss', color='orange')
-ax1.plot(range(1, EPOCHS + 1), val_loss_history, label='val_loss', color=line1.get_color(), linestyle='--')
-
-ax1.set_xlim([1, EPOCHS])
-ax1.set_ylim([0, max(max(train_loss_history), max(val_loss_history)) * 1.1]) 
-ax1.set_ylabel('Loss', color=line1.get_color())
-ax1.tick_params(axis='y', labelcolor=line1.get_color())
+line1, = ax1.plot(range(1, EPOCHS + 1), train_loss_history, label='Train Loss', color='blue')
+ax1.plot(range(1, EPOCHS + 1), val_loss_history, label='Val Loss', color=line1.get_color(), linestyle='--')
 ax1.set_xlabel('Epochs')
+ax1.set_ylabel('Loss Combinata Avversariale')
 ax1.grid(True, linestyle=":")
 ax1.legend(loc='upper right')
-ax1.set_title('Andamento della Loss (MSE) - UNet')
-
-plot_file = "checkpoints/unet_loss_plot.png"
-plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+ax1.set_title('Andamento Loss Bilanciata (L1 + PixelSeal Detector Score) - U-Net')
+plt.savefig("unet_loss_plot.png", dpi=300, bbox_inches='tight')
 plt.close()
-print(f"Grafico salvato con successo in: {plot_file}")
-print("="*50)
+print("Grafici e log salvati con successo.")
