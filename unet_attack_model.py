@@ -2,120 +2,113 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class DownBlock(nn.Module):
+class DoubleConv(nn.Module):
+    """Doppia Convoluzione (Conv -> BatchNorm -> ReLU) * 2"""
     def __init__(self, in_channels, out_channels):
-        super(DownBlock, self).__init__()
+        super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         )
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-
     def forward(self, x):
-        c = self.conv(x)
-        p = self.pool(c)
-        return c, p
-
-class UpBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(UpBlock, self).__init__()
-        self.up = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv_trans = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1) 
-        self.conv = nn.Sequential(
-            nn.Conv2d(out_channels * 2, out_channels, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True)
-        )
-
-    def forward(self, x, skip):
-        x = self.up(x)
-        x = self.conv_trans(x)
-        
-        diffY = skip.size()[2] - x.size()[2]
-        diffX = skip.size()[3] - x.size()[3]
-        if diffY > 0 or diffX > 0:
-            x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
-            
-        concat = torch.cat([x, skip], dim=1)
-        return self.conv(concat)
+        return self.conv(x)
 
 class UNetDenoiseAttack(nn.Module):
     def __init__(self, in_channels=3, out_channels=3):
-        """
-        U-Net Estesa a 5 Livelli con Gestione Interna della Luminanza (YCbCr)
-        Accetta RGB in ingresso ed emette RGB in uscita.
-        """
-        super(UNetDenoiseAttack, self).__init__()
+        super().__init__()
         
-        # Encoder Path (Lavora su 1 canale: Luminanza Y)
-        self.down1 = DownBlock(1, 16)
-        self.down2 = DownBlock(16, 32)
-        self.down3 = DownBlock(32, 64)
-        self.down4 = DownBlock(64, 128)
-        self.down5 = DownBlock(128, 256) # Layer aggiuntivo di profondità
+        # Encoder (Downsampling) - Lavora sulla Luminanza (1 canale)
+        self.inc = DoubleConv(1, 16)
+        self.down1 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(16, 32))
+        self.down2 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(32, 64))
+        self.down3 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(64, 128))
+        self.down4 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(128, 256))
         
         # Bottleneck
-        self.bottleneck = nn.Sequential(
-            nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True)
-        )
+        self.bottleneck = nn.Sequential(nn.MaxPool2d(2), DoubleConv(256, 512))
         
-        # Decoder Path
-        self.up1 = UpBlock(512, 256) # Layer aggiuntivo di risalita
-        self.up2 = UpBlock(256, 128)
-        self.up3 = UpBlock(128, 64)
-        self.up4 = UpBlock(64, 32)
-        self.up5 = UpBlock(32, 16)
+        # Decoder (Upsampling) con Skip Connections
+        self.up1 = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
+        self.conv_up1 = DoubleConv(512, 256) # 256 (up) + 256 (skip) = 512
         
-        # Output Reconstruction per il singolo canale Y
-        self.out_conv = nn.Sequential(
-            nn.Conv2d(16, 1, kernel_size=1),
-            nn.Sigmoid()
-        )
+        self.up2 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
+        self.conv_up2 = DoubleConv(256, 128) # 128 (up) + 128 (skip) = 256
+        
+        self.up3 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
+        self.conv_up3 = DoubleConv(128, 64)   # 64 (up) + 64 (skip) = 128
+        
+        self.up4 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
+        self.conv_up4 = DoubleConv(64, 32)     # 32 (up) + 32 (skip) = 64
+        
+        self.up5 = nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2)
+        self.conv_up5 = DoubleConv(32, 16)     # 16 (up) + 16 (skip) = 32
+        
+        # Output finale della sola luminanza (1 canale)
+        self.outc = nn.Conv2d(16, 1, kernel_size=1)
 
-    def forward(self, rgb_tensor):
-        # STEP 1: Conversione interna da RGB a YCbCr (Formule BT.601)
-        r = rgb_tensor[:, 0:1, :, :]
-        g = rgb_tensor[:, 1:2, :, :]
-        b = rgb_tensor[:, 2:3, :, :]
-        
+    def rgb_to_ycbcr(self, rgb):
+        # Matrice di conversione formale standard BT.601
+        r, g, b = rgb[:, 0:1, :, :], rgb[:, 1:2, :, :], rgb[:, 2:3, :, :]
         y = 0.299 * r + 0.587 * g + 0.114 * b
-        cb = 128.0 - 0.168736 * r - 0.331264 * g + 0.5 * b
-        cr = 128.0 + 0.5 * r - 0.418688 * g - 0.081312 * b
+        cb = -0.1687 * r - 0.3313 * g + 0.5 * b + 0.5
+        cr = 0.5 * r - 0.4187 * g - 0.0813 * b + 0.5
+        return y, cb, cr
 
-        # STEP 2: Processamento dell'architettura U-Net sul solo canale Y
-        c1, p1 = self.down1(y)
-        c2, p2 = self.down2(p1)
-        c3, p3 = self.down3(p2)
-        c4, p4 = self.down4(p3)
-        c5, p5 = self.down5(p4)
-        
-        bn = self.bottleneck(p5)
-        
-        u1 = self.up1(bn, c5)
-        u2 = self.up2(u1, c4)
-        u3 = self.up3(u2, c3)
-        u4 = self.up4(u3, c2)
-        u5 = self.up5(u4, c1)
-        
-        y_attacked = self.out_conv(u5)
-        
-        # STEP 3: Riconversione interna da YCbCr a RGB usando Cb e Cr originali
-        r_new = y_attacked + 1.402 * (cr - 128.0)
-        g_new = y_attacked - 0.344136 * (cb - 128.0) - 0.714136 * (cr - 128.0)
-        b_new = y_attacked + 1.772 * (cb - 128.0)
-        
-        rgb_attacked = torch.cat([r_new, g_new, b_new], dim=1)
-        return torch.clamp(rgb_attacked, 0.0, 1.0)
+    def ycbcr_to_rgb(self, y, cb, cr):
+        # Matrice di conversione inversa formale
+        r = y + 1.402 * (cr - 0.5)
+        g = y - 0.34414 * (cb - 0.5) - 0.71414 * (cr - 0.5)
+        b = y + 1.772 * (cb - 0.5)
+        return torch.cat([r, g, b], dim=1)
 
-if __name__ == "__main__":
-    dummy_input = torch.randn(1, 3, 256, 256)
-    model = UNetDenoiseAttack()
-    output = model(dummy_input)
-    print(f"Input RGB Shape: {dummy_input.shape}")
-    print(f"Output RGB Shape: {output.shape}")
+    def forward(self, x):
+        # 1. Riceve RGB (3, 256, 256) ed estrae i componenti
+        y, cb, cr = self.rgb_to_ycbcr(x)
+        
+        # 2. Encoder sulla Luminanza (Salataggio delle skip connections)
+        x1 = self.inc(y)        # Canali: 16
+        x2 = self.down1(x1)     # Canali: 32
+        x3 = self.down2(x2)     # Canali: 64
+        x4 = self.down3(x3)     # Canali: 128
+        x5 = self.down4(x4)     # Canali: 256
+        
+        # Bottleneck
+        b = self.bottleneck(x5) # Canali: 512
+        
+        # 3. Decoder con Concatetazione Esplicita delle SKIP CONNECTIONS
+        # Layer 1
+        t1 = self.up1(b)
+        t1 = torch.cat([t1, x5], dim=1) # Unisce l'up-sampling con il livello 256 dell'encoder
+        t1 = self.conv_up1(t1)
+        
+        # Layer 2
+        t2 = self.up2(t1)
+        t2 = torch.cat([t2, x4], dim=1) # Unisce con il livello 128
+        t2 = self.conv_up2(t2)
+        
+        # Layer 3
+        t3 = self.up3(t2)
+        t3 = torch.cat([t3, x3], dim=1) # Unisce con il livello 64
+        t3 = self.conv_up3(t3)
+        
+        # Layer 4
+        t4 = self.up4(t3)
+        t4 = torch.cat([t4, x2], dim=1) # Unisce con il livello 32
+        t4 = self.conv_up4(t4)
+        
+        # Layer 5
+        t5 = self.up5(t4)
+        t5 = torch.cat([t5, x1], dim=1) # Unisce con il livello 16
+        t5 = self.conv_up5(t5)
+        
+        # Convoluzione finale per ricreare la sola luminanza modificata
+        y_reconstructed = self.outc(t5) # Volume (1, 256, 256)
+        
+        # 4. Riassemblaggio finale in RGB usando i canali cromatici originari immutati
+        rgb_output = self.ycbcr_to_rgb(y_reconstructed, cb, cr)
+        
+        return rgb_output # Volume CORRETTO (3, 256, 256)
