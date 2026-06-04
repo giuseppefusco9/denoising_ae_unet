@@ -27,8 +27,8 @@ LEARNING_RATE = 2e-4
 CROP_SIZE = 256      
 
 # BILANCIAMENTO TARGET (80% IMMAGINE - 20% DETECTOR)
-ALPHA = 0.8   
-LAMBDA = 0.2
+ALPHA = 0.8 
+LAMBDA = 0.2 
 
 # Parametro per il Gradient Clipping (Norma massima del gradiente)
 MAX_GRAD_NORM = 1.0
@@ -183,25 +183,30 @@ summary_df = pd.DataFrame({
 summary_df.to_csv("unet_separated_losses.csv", index=False, sep=";")
 
 # ==========================================
-# 6. ELABORAZIONE GRAFICA (RITORNO AL PANNELLO SINGOLO NOMINALE)
+# 6. ELABORAZIONE GRAFICA MULTI-CURVA (CORRETTA)
 # ==========================================
-fig, ax1 = plt.subplots(figsize=(10, 8))
+plt.figure(figsize=(12, 10))
 
-# Linea continua per il Training (linewidth sostituisce fontweight per evitare l'AttributeError)
-line1, = ax1.plot(range(1, EPOCHS + 1), history["train_total"], label='Train Loss', color='blue', linewidth=2.5)
+plt.subplot(2, 1, 1)
+# Corretto: rimosso fontweight='bold', inserito linewidth=2.5
+plt.plot(range(1, EPOCHS + 1), history["train_total"], label='Train Total', color='purple', linewidth=2.5)
+plt.plot(range(1, EPOCHS + 1), history["val_total"], label='Val Total', color='purple', linestyle='--')
+plt.ylabel('Loss Combinata Riscalata')
+plt.grid(True, linestyle=":")
+plt.legend()
+plt.title('Andamento Regolarizzato della Loss Complessiva')
 
-# Linea tratteggiata per la Validazione che segue lo stesso codice colore
-ax1.plot(range(1, EPOCHS + 1), history["val_total"], label='Val Loss', color=line1.get_color(), linestyle='--')
+plt.subplot(2, 1, 2)
+plt.plot(range(1, EPOCHS + 1), history["train_img"], label='Train Img (L1)', color='blue')
+plt.plot(range(1, EPOCHS + 1), history["val_img"], label='Val Img (L1)', color='blue', linestyle='--')
+plt.plot(range(1, EPOCHS + 1), history["train_adv"], label='Train Detector (MSE)', color='orange')
+plt.plot(range(1, EPOCHS + 1), history["val_adv"], label='Val Detector (MSE)', color='orange', linestyle='--')
+plt.xlabel('Epochs')
+plt.ylabel('Valore Loss Singola Componente (Valore Puro)')
+plt.grid(True, linestyle=":")
+plt.legend()
 
-# Configurazione formale degli assi e della griglia geometrica
-ax1.set_xlabel('Epochs')
-ax1.set_ylabel('Loss Combinata Riscalata (80/20 + Clipping)')
-ax1.grid(True, linestyle=":")
-ax1.legend(loc='upper right')
-ax1.set_title('Andamento Loss Bilanciata (L1 Img + MSE PixelSeal Detector) - U-Net')
-
-# Salvataggio ad alta risoluzione per l'inserimento nella documentazione della tesi
-plt.savefig("unet_loss_plot.png", dpi=300, bbox_inches='tight')
+plt.tight_layout()
+plt.savefig("unet_separated_loss_plot.png", dpi=300)
 plt.close()
-
-print("✅ Grafico prodotto con successo in 'unet_loss_plot.png'!")
+print("✅ Grafici multi-curva salvati senza errori di rendering in 'unet_separated_loss_plot.png'!")
