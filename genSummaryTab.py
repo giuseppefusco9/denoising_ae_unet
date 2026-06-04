@@ -1,24 +1,29 @@
 import torch
+import torch.nn as nn
 from torchinfo import summary
+import videoseal
 
-# Importiamo la tua U-Net RGB con detector incapsulato
 from unet_attack_model import UNetDenoiseAttack
 
-# ==========================================
-# 1. CONFIGURAZIONE E INIZIALIZZAZIONE
-# ==========================================
+# Wrapper strutturato ad uso esclusivo di torchinfo per mappare l'albero gerarchico completo
+class AttackAndEvaluationWrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.unet = UNetDenoiseAttack(in_channels=3, out_channels=3)
+        self.detector = videoseal.load("pixelseal")
+        self.detector.eval()
+        for param in self.detector.parameters():
+            param.requires_grad = False
+
+    def forward(self, x):
+        # Riproduce fedelmente la chiamata a dizionario passante del loop reale
+        reconstructed_imgs, detected_bit_logits = self.unet(x, detector=self.detector)
+        return reconstructed_imgs, detected_bit_logits
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model_to_analyze = AttackAndEvaluationWrapper().to(device)
 
-# Inizializziamo direttamente il modello reale
-model_to_analyze = UNetDenoiseAttack(in_channels=3, out_channels=3).to(device)
-
-# ==========================================
-# 2. GENERAZIONE DEL REPORT 
-# ==========================================
-# Manteniamo le impostazioni avanzate:
-# - row_settings=["depth", "var_names"] ci permette di tracciare le skip connection 
-#   tramite i nomi delle variabili (x1..x5, t1..t5)
-# - depth=4 scende in profondità sia nei sotto-blocchi DoubleConv che nel grafo di PixelSeal
+# Creazione del report tabellare txt
 model_summary = summary(
     model_to_analyze, 
     input_size=(32, 3, 256, 256), 
@@ -28,10 +33,7 @@ model_summary = summary(
     verbose=0
 )
 
-# ==========================================
-# 3. SCRITTURA DEL FILE SUMMARY.TXT
-# ==========================================
 with open("summary.txt", "w", encoding="utf-8") as f:
     f.write(str(model_summary))
 
-print("✅ File summary.txt generato con successo direttamente dal modello integrato!")
+print("✅ Tabella strutturale esportata correttamente nel file 'summary.txt'!")

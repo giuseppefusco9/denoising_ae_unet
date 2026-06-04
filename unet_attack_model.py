@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import videoseal
 
 class DoubleConv(nn.Module):
     """Doppia Convoluzione (Conv -> BatchNorm -> ReLU) * 2"""
@@ -47,19 +46,11 @@ class UNetDenoiseAttack(nn.Module):
         self.up5 = nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2)
         self.conv_up5 = DoubleConv(32, 16)
         
-        # Convoluzione finale d'uscita (RGB a 3 canali)
+        # Output convoluzionale RGB finale (3 canali)
         self.outc = nn.Conv2d(16, out_channels, kernel_size=1)
-        
-        # --- INCAPSULAMENTO DETECTOR PIXELSEAL (FROZEN) ---
-        self.detector = videoseal.load("pixelseal")
-        self.detector.eval() # Imposta permanentemente in modalità valutazione
-        
-        # Congelamento immediato di tutti i parametri del modello di Meta
-        for param in self.detector.parameters():
-            param.requires_grad = False
 
-    def forward(self, x):
-        # 1. Fase di attacco ed elaborazione neurale (U-Net)
+    def forward(self, x, detector=None):
+        # 1. Pipeline di compressione ed estrazione delle feature (Encoder)
         x1 = self.inc(x)        
         x2 = self.down1(x1)     
         x3 = self.down2(x2)     
@@ -68,6 +59,7 @@ class UNetDenoiseAttack(nn.Module):
         
         b = self.bottleneck(x5) 
         
+        # 2. Pipeline di ricostruzione con concatenazione speculare (Decoder)
         t1 = self.up1(b)
         t1 = torch.cat([t1, x5], dim=1) 
         t1 = self.conv_up1(t1)
@@ -90,10 +82,10 @@ class UNetDenoiseAttack(nn.Module):
         
         reconstructed_imgs = self.outc(t5) 
         
-        # 2. Estrazione automatica dello spazio latente tramite il detector interno
-        detector_outputs = self.detector.detect(reconstructed_imgs)
-        # Isoliamo i logiti dei bit dal secondo indice in poi, coerentemente con il tuo script
-        detected_bit_logits = detector_outputs["preds"][:, 1:]
-        
-        # Restituiamo sia l'immagine modificata sia i logiti differenziabili
-        return reconstructed_imgs, detected_bit_logits
+        # 3. Se inserito nel loop di training multi-GPU, calcola i logiti passanti
+        if detector is not None:
+            detector_outputs = detector.detect(reconstructed_imgs)
+            detected_bit_logits = detector_outputs["preds"][:, 1:]
+            return reconstructed_imgs, detected_bit_logits
+            
+        return reconstructed_imgs
