@@ -16,9 +16,9 @@ class AttackAndEvaluationWrapper(nn.Module):
             param.requires_grad = False
 
     def forward(self, x):
-        # Riproduce fedelmente la chiamata a dizionario passante del loop reale
-        reconstructed_imgs, detected_bit_logits = self.unet(x, detector=self.detector)
-        return reconstructed_imgs, detected_bit_logits
+        # CORRETTO: Spacchettiamo tre argomenti per allinearci al nuovo metodo residuale della U-Net
+        reconstructed_imgs, detected_bit_logits, detection_score = self.unet(x, detector=self.detector)
+        return reconstructed_imgs, detected_bit_logits, detection_score
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model_to_analyze = AttackAndEvaluationWrapper().to(device)
