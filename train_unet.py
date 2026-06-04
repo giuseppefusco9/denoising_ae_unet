@@ -25,9 +25,9 @@ EPOCHS = 60
 LEARNING_RATE = 2e-4 
 CROP_SIZE = 256      
 
-# IPERPARAMETRI DI BILANCIAMENTO DELLA LOSS MULTI-TASK
-ALPHA = 1.0   # Peso per la fedeltà dell'immagine (L1 Loss)
-LAMBDA = 0.1  # Peso per la rimozione del watermark (PixelSeal Score)
+# IPERPARAMETRI DI BILANCIAMENTO
+ALPHA = 0.0   # Peso per il confronto pixel-by-pixel delle immagini
+LAMBDA = 1.0  # Peso per l'allineamento dei logiti latenti (Attacco)
 
 # ==========================================
 # 2. PREPARAZIONE DATI
@@ -42,11 +42,10 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_w
 print(f"Dati Caricati: {len(train_dataset)} Train | {len(val_dataset)} Val.")
 
 # ==========================================
-# 3. INIZIALIZZAZIONE MODELLI E DETECTOR CONGELATO
+# 3. INIZIALIZZAZIONE MODELLI E FUNZIONI DI COSTO
 # ==========================================
 model = UNetDenoiseAttack(in_channels=3, out_channels=3).to(device)
 
-# --- Caricamento e congelamento del Detector PixelSeal ---
 print("Caricamento detector PixelSeal...")
 detector = videoseal.load("pixelseal")
 detector.to(device)
@@ -55,25 +54,23 @@ detector.eval()
 for param in detector.parameters():
     param.requires_grad = False
 
-criterion_fidelity = nn.L1Loss().to(device)
+# Entrambe le anime della loss usano la L1Loss per garantire stabilità e linearità
+criterion_img = nn.L1Loss().to(device)
+criterion_logits = nn.L1Loss().to(device)
 
 if num_gpus > 1:
     model = nn.DataParallel(model)
 
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
 os.makedirs("checkpoints", exist_ok=True)
 
-# ==========================================
-# 4. STORICO DEL TRAINING
-# ==========================================
 train_loss_history = []
 val_loss_history = []
 
 # ==========================================
-# 5. TRAINING LOOP AVVERSARIALE
+# 5. TRAINING LOOP (ALLINEAMENTO LOGITI PULITI)
 # ==========================================
-print(f"\nInizio Addestramento (L1 Fidelity * {ALPHA} + PixelSeal Score * {LAMBDA})...\n")
+print(f"\nInizio Addestramento (L1 Immagine * {ALPHA} + L1 Logiti Puliti * {LAMBDA})...\n")
 
 best_val_loss = float('inf')
 
@@ -87,26 +84,28 @@ for epoch in range(EPOCHS):
         
         optimizer.zero_grad()
         
-        # 1. Forward pass attraverso la nostra U-Net articolata
+        # 1. Passaggio nella U-Net (Lavora interamente in RGB)
         reconstructed_imgs = model(wm_imgs)
         
-        # 2. Calcolo della Loss di Fedeltà (L1 rispetto all'immagine pulita originale)
-        loss_fid = criterion_fidelity(reconstructed_imgs, clean_imgs)
+        # 2. Loss di fedeltà visiva tra l'immagine d'uscita e l'originale pulita
+        loss_fidelity = criterion_img(reconstructed_imgs, clean_imgs)
         
-        # 3. Calcolo della Loss Avversariale (Esecuzione del detector congelato sull'output)
-        # Il detector estrae i logiti di presenza del watermark. Più sono alti, più è sicuro.
-        detector_outputs = detector.detect(reconstructed_imgs)
-        detector_logits = detector_outputs["preds"][:, 0]  # Indice 0 rappresenta lo score del watermark
+        # 3. Estrazione dei logiti dei bit dal campione d'uscita (indice 1 in poi)
+        outputs_reconstructed = detector.detect(reconstructed_imgs)
+        logits_reconstructed = outputs_reconstructed["preds"][:, 1:]
         
-        # Massimizziamo l'errore del detector (forzando lo score a scendere verso o sotto lo zero)
-        # Usiamo un clamp morbido per spingere i logiti nella zona di incertezza negativa
-        loss_adv = torch.mean(torch.clamp(detector_logits + 2.0, min=0.0))
+        # 4. Estrazione dei logiti dall'immagine originale pulita (SENZA GRADIENTI)
+        # Questa firma rappresenta lo "stato di zero" o di puro rumore casuale
+        with torch.no_grad():
+            outputs_clean = detector.detect(clean_imgs)
+            logits_clean_target = outputs_clean["preds"][:, 1:].detach()
         
-        # Loss Totale Combinata
-        total_loss = (ALPHA * loss_fid) + (LAMBDA * loss_adv)
+        # 5. Calcolo della Loss Avversariale: forziamo i logiti sotto attacco 
+        # a collassare sopra il profilo dei logiti della mappa pulita originaria
+        loss_adv = criterion_logits(logits_reconstructed, logits_clean_target)
         
-        if num_gpus > 1:
-            total_loss = total_loss.mean()
+        # Combinazione lineare delle Loss
+        total_loss = (ALPHA * loss_fidelity) + (LAMBDA * loss_adv)
             
         total_loss.backward()
         optimizer.step()
@@ -125,14 +124,17 @@ for epoch in range(EPOCHS):
             clean_imgs = clean_imgs.to(device)
             
             reconstructed_imgs = model(wm_imgs)
+            loss_fidelity = criterion_img(reconstructed_imgs, clean_imgs)
             
-            loss_fid = criterion_fidelity(reconstructed_imgs, clean_imgs)
+            outputs_reconstructed = detector.detect(reconstructed_imgs)
+            logits_reconstructed = outputs_reconstructed["preds"][:, 1:]
             
-            detector_outputs = detector.detect(reconstructed_imgs)
-            detector_logits = detector_outputs["preds"][:, 0]
-            loss_adv = torch.mean(torch.clamp(detector_logits + 2.0, min=0.0))
+            outputs_clean = detector.detect(clean_imgs)
+            logits_clean_target = outputs_clean["preds"][:, 1:].detach()
             
-            total_val_loss = (ALPHA * loss_fid) + (LAMBDA * loss_adv)
+            loss_adv = criterion_logits(logits_reconstructed, logits_clean_target)
+            
+            total_val_loss = (ALPHA * loss_fidelity) + (LAMBDA * loss_adv)
             if num_gpus > 1:
                 total_val_loss = total_val_loss.mean()
             val_loss += total_val_loss.item()
@@ -146,12 +148,12 @@ for epoch in range(EPOCHS):
         best_val_loss = avg_val_loss
         state_dict_to_save = model.module.state_dict() if num_gpus > 1 else model.state_dict()
         torch.save(state_dict_to_save, "checkpoints/unet_best.pth")
-        print("Nuovo record di validazione avversariale: Modello salvato.")
+        print("Nuovo record registrato. Modello salvato.")
 
 print("\nAddestramento Completato.")
 
 # ==========================================
-# 6. SALVATAGGIO SUMMARY ED ELABORAZIONE GRAFICA
+# 6. EXPORT LOG E GRAFICI
 # ==========================================
 summary_df = pd.DataFrame({
     "Epoca": range(1, EPOCHS + 1),
@@ -164,10 +166,10 @@ fig, ax1 = plt.subplots(figsize=(10, 8))
 line1, = ax1.plot(range(1, EPOCHS + 1), train_loss_history, label='Train Loss', color='blue')
 ax1.plot(range(1, EPOCHS + 1), val_loss_history, label='Val Loss', color=line1.get_color(), linestyle='--')
 ax1.set_xlabel('Epochs')
-ax1.set_ylabel('Loss Combinata Avversariale')
+ax1.set_ylabel('Loss Combinata (L1 Img + L1 Logiti Puliti)')
 ax1.grid(True, linestyle=":")
 ax1.legend(loc='upper right')
-ax1.set_title('Andamento Loss Bilanciata (L1 + PixelSeal Detector Score) - U-Net')
+ax1.set_title('Andamento Loss con Allineamento Diretto nello Spazio Latente dei Logiti')
 plt.savefig("unet_loss_plot.png", dpi=300, bbox_inches='tight')
 plt.close()
-print("Grafici e log salvati con successo.")
+print("Grafici salvati.")
