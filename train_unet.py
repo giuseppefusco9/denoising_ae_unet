@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+import torchvision.utils as vutils
 import videoseal
 
 from loader_dataset import WatermarkDenoisingDataset
@@ -22,16 +23,21 @@ print(f"Numero di GPU rilevate: {num_gpus}")
 print("="*50)
 
 BATCH_SIZE = 32      
-EPOCHS = 100        
-LEARNING_RATE = 2e-5 
+EPOCHS = 60          
+LEARNING_RATE = 2e-4 
 CROP_SIZE = 256      
 
-# BILANCIAMENTO TARGET (80% IMMAGINE - 20% DETECTOR)
-ALPHA = 0.8 
-LAMBDA = 0.2 
-
-# Parametro per il Gradient Clipping (Norma massima del gradiente)
+# Soglia massima consentita per la norma del gradiente L2 (Gradient Clipping)
 MAX_GRAD_NORM = 1.0
+
+# --- FATTORI DI NORMALIZZAZIONE STATICA (BASELINE STABILE 1:1) ---
+# Compensano lo sbilanciamento di partenza (Loss Img ~0.05, Loss Detector ~2.2)
+NORM_IMG = 1.0 / 0.05        # Fattore = 20.0
+NORM_DETECTOR = 1.0 / 2.2    # Fattore = 0.4545
+
+# --- TARGET DI BILANCIAMENTO NOMINALE FINALE (80 - 20) ---
+TARGET_ALPHA = 0.8
+TARGET_LAMBDA = 0.2
 
 # ==========================================
 # 2. PREPARAZIONE DATI
@@ -44,7 +50,7 @@ train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, nu
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
 
 # ==========================================
-# 3. INIZIALIZZAZIONE MODELLI E LOSS
+# 3. INIZIALIZZAZIONE MODELLI E COMPONENTI DI COSTO
 # ==========================================
 model = UNetDenoiseAttack(in_channels=3, out_channels=3).to(device)
 
@@ -54,6 +60,7 @@ detector.eval()
 for param in detector.parameters():
     param.requires_grad = False
 
+# Definiamo le funzioni di costo fondamentali
 criterion_img = nn.L1Loss().to(device)
 criterion_logits = nn.MSELoss().to(device)
 
@@ -61,35 +68,58 @@ if num_gpus > 1:
     model = nn.DataParallel(model)
 
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-os.makedirs("checkpoints", exist_ok=True)
 
-# Storici separati per monitorare l'equilibrio del gradiente
+# Creazione delle cartelle di output per i checkpoint e le preview visive
+os.makedirs("checkpoints", exist_ok=True)
+os.makedirs("checkpoints/progress_images", exist_ok=True)
+
+# Inizializzazione degli storici per tracciare sia i valori combinati che quelli puri
 history = {
     "train_total": [], "train_img": [], "train_adv": [],
     "val_total": [], "val_img": [], "val_adv": []
 }
 
 # ==========================================
-# 4. TRAINING LOOP CON GRADIENT CLIPPING
+# 4. TRAINING LOOP CON LOSS SCHEDULER E GRADIENT CLIPPING
 # ==========================================
-print(f"\nInizio Addestramento Bilanciato 80/20 (Con Gradient Clipping a max_norm={MAX_GRAD_NORM})...\n")
+print(f"\nInizio Addestramento Schedulato (Target Finale: {TARGET_ALPHA*100:.0f}/{TARGET_LAMBDA*100:.0f})...\n")
 
 best_val_loss = float('inf')
 
 for epoch in range(EPOCHS):
     model.train()
     epoch_losses = {"total": 0.0, "img": 0.0, "adv": 0.0}
+    current_epoch_1based = epoch + 1
     
+    # --- CALCOLO DINAMICO DEI COEFFICIENTI DI FASE ---
+    if current_epoch_1based <= 15:
+        # Fase 1 (Epoche 1-15): 100% Immagine, 0% Attacco
+        current_alpha_target = 1.0
+        current_lambda_target = 0.0
+    elif current_epoch_1based <= 45:
+        # Fase 2 (Epoche 16-45): Transizione lineare verso il target 80-20
+        t = (current_epoch_1based - 15) / 30.0
+        current_alpha_target = 1.0 - (1.0 - TARGET_ALPHA) * t
+        current_lambda_target = 0.0 + (TARGET_LAMBDA - 0.0) * t
+    else:
+        # Fase 3 (Epoche 46-60): Consolidamento fisso a quota 80-20
+        current_alpha_target = TARGET_ALPHA
+        current_lambda_target = TARGET_LAMBDA
+
+    # Proiezione dei target probabilistici sulle costanti di scala numeriche
+    alpha = current_alpha_target * NORM_IMG
+    lambda_val = current_lambda_target * NORM_DETECTOR
+
     for wm_imgs, clean_imgs in train_loader:
         wm_imgs = wm_imgs.to(device)
         clean_imgs = clean_imgs.to(device)
         
         optimizer.zero_grad()
         
-        # Forward pass coordinato multi-GPU
+        # Forward pass coordinato (Bypassa il crash StopIteration di DataParallel)
         reconstructed_imgs, logits_reconstructed = model(wm_imgs, detector=detector)
         
-        # Calcolo delle loss pure (senza iperparametri per lo storico corretto)
+        # Calcolo dei valori di errore puro (vengono registrati puliti nello storico)
         loss_fidelity = criterion_img(reconstructed_imgs, clean_imgs)
         
         with torch.no_grad():
@@ -98,8 +128,8 @@ for epoch in range(EPOCHS):
         
         loss_adv = criterion_logits(logits_reconstructed, logits_clean_target)
         
-        # Aggregazione bilanciata 80-20
-        total_loss = (ALPHA * loss_fidelity) + (LAMBDA * loss_adv)
+        # Combinazione lineare finale controllata dallo scheduler dell'epoca corrente
+        total_loss = (alpha * loss_fidelity) + (lambda_val * loss_adv)
         
         if num_gpus > 1:
             total_loss = total_loss.mean()
@@ -108,8 +138,8 @@ for epoch in range(EPOCHS):
             
         total_loss.backward()
         
-        # --- INNOVAZIONE METODOLOGICA: GRADIENT CLIPPING ---
-        # Taglia le anomalie provocate dalla risalita dei gradienti attraverso ConvNeXtV2
+        # --- GRADIENT CLIPPING ---
+        # Intercetta ed elimina l'esplosione dei gradienti in risalita da PixelSeal
         nn.utils.clip_grad_norm_(model.parameters(), max_norm=MAX_GRAD_NORM)
         
         optimizer.step()
@@ -123,9 +153,10 @@ for epoch in range(EPOCHS):
     history["train_img"].append(epoch_losses["img"] / num_batches_train)
     history["train_adv"].append(epoch_losses["adv"] / num_batches_train)
     
-    # --- VALIDAZIONE ---
+    # --- CICLO DI VALIDAZIONE ED ESTRAZIONE PREVIEW ---
     model.eval()
     val_epoch_losses = {"total": 0.0, "img": 0.0, "adv": 0.0}
+    saved_preview_this_epoch = False
     
     with torch.no_grad():
         for wm_imgs, clean_imgs in val_loader:
@@ -140,7 +171,7 @@ for epoch in range(EPOCHS):
             
             loss_adv = criterion_logits(logits_reconstructed, logits_clean_target)
             
-            total_val_loss = (ALPHA * loss_fidelity) + (LAMBDA * loss_adv)
+            total_val_loss = (alpha * loss_fidelity) + (lambda_val * loss_adv)
             
             if num_gpus > 1:
                 total_val_loss = total_val_loss.mean()
@@ -151,25 +182,36 @@ for epoch in range(EPOCHS):
             val_epoch_losses["img"] += loss_fidelity.item()
             val_epoch_losses["adv"] += loss_adv.item()
             
+            # --- SALVATAGGIO CAMPIONE VISIVO INTERMEDIO ---
+            if not saved_preview_this_epoch:
+                # Creazione di una striscia comparativa: Input con WM | Target Pulito | Risultato U-Net
+                preview_grid = torch.cat([wm_imgs[0:1], clean_imgs[0:1], reconstructed_imgs[0:1]], dim=0)
+                vutils.save_image(
+                    preview_grid, 
+                    f"checkpoints/progress_images/epoch_{current_epoch_1based:02d}_target_{current_alpha_target:.2f}_{current_lambda_target:.2f}.png",
+                    normalize=True
+                )
+                saved_preview_this_epoch = True
+            
     num_batches_val = len(val_loader)
     history["val_total"].append(val_epoch_losses["total"] / num_batches_val)
     history["val_img"].append(val_epoch_losses["img"] / num_batches_val)
     history["val_adv"].append(val_epoch_losses["adv"] / num_batches_val)
     
-    print(f"Epoca [{epoch+1}/{EPOCHS}]")
-    print(f"  [TRAIN] Total: {history['train_total'][-1]:.5f} | Img (L1): {history['train_img'][-1]:.5f} | Detector (MSE): {history['train_adv'][-1]:.5f}")
-    print(f"  [VAL]   Total: {history['val_total'][-1]:.5f} | Img (L1): {history['val_img'][-1]:.5f} | Detector (MSE): {history['val_adv'][-1]:.5f}")
+    print(f"Epoca [{current_epoch_1based}/{EPOCHS}] | Config Target: {current_alpha_target*100:.1f}% Img - {current_lambda_target*100:.1f}% Det")
+    print(f"  [TRAIN] Total Sched: {history['train_total'][-1]:.5f} | Img Puro (L1): {history['train_img'][-1]:.5f} | Det Puro (MSE): {history['train_adv'][-1]:.5f}")
+    print(f"  [VAL]   Total Sched: {history['val_total'][-1]:.5f} | Img Puro (L1): {history['val_img'][-1]:.5f} | Det Puro (MSE): {history['val_adv'][-1]:.5f}")
     
     if history["val_total"][-1] < best_val_loss:
         best_val_loss = history["val_total"][-1]
         state_dict_to_save = model.module.state_dict() if num_gpus > 1 else model.state_dict()
         torch.save(state_dict_to_save, "checkpoints/unet_best.pth")
-        print("  -> Nuovo minimo registrato. Modello salvato.")
+        print("  -> Nuovo record di validazione complessiva registrato. Pesi salvati.")
 
 print("\nAddestramento Completato.")
 
 # ==========================================
-# 5. SALVATAGGIO DEI LOG SEPARATI
+# 5. SALVATAGGIO REPO LOG IN FORMATO CSV
 # ==========================================
 summary_df = pd.DataFrame({
     "Epoca": range(1, EPOCHS + 1),
@@ -183,30 +225,34 @@ summary_df = pd.DataFrame({
 summary_df.to_csv("unet_separated_losses.csv", index=False, sep=";")
 
 # ==========================================
-# 6. ELABORAZIONE GRAFICA MULTI-CURVA (CORRETTA)
+# 6. GENERAZIONE GRAFICO COMPLETO A DOPPIO PANNELLO NOMINALE
 # ==========================================
 plt.figure(figsize=(12, 10))
 
+# --- PANNELLO SUPERIORE: LOSS COMPLESSIVA RISCALATA ---
 plt.subplot(2, 1, 1)
-# Corretto: rimosso fontweight='bold', inserito linewidth=2.5
-plt.plot(range(1, EPOCHS + 1), history["train_total"], label='Train Total', color='purple', linewidth=2.5)
-plt.plot(range(1, EPOCHS + 1), history["val_total"], label='Val Total', color='purple', linestyle='--')
+# Uso corretto di linewidth=2.5 per eliminare l'AttributeError legato a fontweight
+plt.plot(range(1, EPOCHS + 1), history["train_total"], label='Train Total Schedulata', color='purple', linewidth=2.5)
+plt.plot(range(1, EPOCHS + 1), history["val_total"], label='Val Total Schedulata', color='purple', linestyle='--')
 plt.ylabel('Loss Combinata Riscalata')
 plt.grid(True, linestyle=":")
-plt.legend()
-plt.title('Andamento Regolarizzato della Loss Complessiva')
+plt.legend(loc='upper right')
+plt.title('Andamento Regolarizzato della Loss Complessiva Schedulata')
 
+# --- PANNELLO INFERIORE: COMPONENTI PURE SEPARATE ---
 plt.subplot(2, 1, 2)
 plt.plot(range(1, EPOCHS + 1), history["train_img"], label='Train Img (L1)', color='blue')
 plt.plot(range(1, EPOCHS + 1), history["val_img"], label='Val Img (L1)', color='blue', linestyle='--')
 plt.plot(range(1, EPOCHS + 1), history["train_adv"], label='Train Detector (MSE)', color='orange')
 plt.plot(range(1, EPOCHS + 1), history["val_adv"], label='Val Detector (MSE)', color='orange', linestyle='--')
 plt.xlabel('Epochs')
-plt.ylabel('Valore Loss Singola Componente (Valore Puro)')
+plt.ylabel('Valore Loss Componente (Valore Puro)')
 plt.grid(True, linestyle=":")
-plt.legend()
+plt.legend(loc='upper right')
+plt.title('Analisi di Convergenza Separata (Isolamento degli Ordini di Grandezza)')
 
 plt.tight_layout()
 plt.savefig("unet_separated_loss_plot.png", dpi=300)
 plt.close()
-print("✅ Grafici multi-curva salvati senza errori di rendering in 'unet_separated_loss_plot.png'!")
+
+print("✅ File log CSV e grafico multi-pannello 'unet_separated_loss_plot.png' salvati correttamente!")
