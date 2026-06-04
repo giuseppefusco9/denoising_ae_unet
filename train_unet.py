@@ -180,13 +180,14 @@ summary_df = pd.DataFrame({
 summary_df.to_csv("unet_separated_losses.csv", index=False, sep=";")
 
 # ==========================================
-# 6. ELABORAZIONE GRAFICA MULTI-CURVA
+# 6. ELABORAZIONE GRAFICA MULTI-CURVA (CORRETTA)
 # ==========================================
 plt.figure(figsize=(12, 10))
 
 # Subplot 1: Andamento Totale Combinato
 plt.subplot(2, 1, 1)
-plt.plot(range(1, EPOCHS + 1), history["train_total"], label='Train Total', color='purple', fontweight='bold')
+# Sostituito fontweight='bold' con linewidth=2.5
+plt.plot(range(1, EPOCHS + 1), history["train_total"], label='Train Total', color='purple', linewidth=2.5)
 plt.plot(range(1, EPOCHS + 1), history["val_total"], label='Val Total', color='purple', linestyle='--')
 plt.ylabel('Loss Combinata Complessiva')
 plt.grid(True, linestyle=":")
@@ -207,4 +208,4 @@ plt.legend()
 plt.tight_layout()
 plt.savefig("unet_separated_loss_plot.png", dpi=300)
 plt.close()
-print("✅ Grafici multi-curva salvati in 'unet_separated_loss_plot.png'!")
+print("✅ Grafici multi-curva salvati correttamente in 'unet_separated_loss_plot.png'!")
