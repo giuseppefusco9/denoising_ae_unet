@@ -46,7 +46,6 @@ class UNetDenoiseAttack(nn.Module):
         self.up5 = nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2)
         self.conv_up5 = DoubleConv(32, 16)
         
-        # Output convoluzionale RGB finale (3 canali)
         self.outc = nn.Conv2d(16, out_channels, kernel_size=1)
 
     def forward(self, x, detector=None):
@@ -80,9 +79,14 @@ class UNetDenoiseAttack(nn.Module):
         t5 = torch.cat([t5, x1], dim=1) 
         t5 = self.conv_up5(t5)
         
-        reconstructed_imgs = self.outc(t5) 
+        # Convoluzione lineare grezza
+        raw_output = self.outc(t5) 
         
-        # 3. Se inserito nel loop di training multi-GPU, calcola i logiti passanti
+        # --- INNOVAZIONE: SCHEDULING DI NORMALIZZAZIONE CORRETTO VIA SIGMOIDE ---
+        # Forza ogni canale del volume d'uscita a rientrare rigidamente nel range [0.0, 1.0]
+        reconstructed_imgs = torch.sigmoid(raw_output)
+        
+        # 3. Passaggio differenziabile protetto all'interno del detector
         if detector is not None:
             detector_outputs = detector.detect(reconstructed_imgs)
             detected_bit_logits = detector_outputs["preds"][:, 1:]
