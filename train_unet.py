@@ -22,8 +22,8 @@ print(f"Numero di GPU rilevate: {num_gpus}")
 print("="*50)
 
 BATCH_SIZE = 32      
-EPOCHS = 60          
-LEARNING_RATE = 2e-4 
+EPOCHS = 100        
+LEARNING_RATE = 2e-5 
 CROP_SIZE = 256      
 
 # BILANCIAMENTO TARGET (80% IMMAGINE - 20% DETECTOR)
