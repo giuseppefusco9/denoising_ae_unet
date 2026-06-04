@@ -27,9 +27,8 @@ LEARNING_RATE = 2e-4
 CROP_SIZE = 256      
 
 # BILANCIAMENTO TARGET (80% IMMAGINE - 20% DETECTOR)
-# Basato sui valori iniziali riscontrati empiricamente (Img ~0.05, Detector ~2.2)
-ALPHA = 16.0   
-LAMBDA = 0.09  
+ALPHA = 0.8   
+LAMBDA = 0.2
 
 # Parametro per il Gradient Clipping (Norma massima del gradiente)
 MAX_GRAD_NORM = 1.0
