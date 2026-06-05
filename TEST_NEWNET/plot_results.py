@@ -6,8 +6,8 @@ from sklearn.metrics import roc_curve, auc
 # ==========================================
 # 1. CONFIGURAZIONE
 # ==========================================
-CSV_FILE = "risultati_unet_raptor.csv" 
-COLONNA_SCORE = 'bit accuracy' 
+CSV_FILE = "risultati_unet_v2.csv" 
+COLONNA_SCORE = 'bit_accuracy' 
 
 sns.set_theme(style="whitegrid")
 

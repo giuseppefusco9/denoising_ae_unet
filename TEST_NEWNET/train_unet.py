@@ -3,22 +3,13 @@ train_unet.py
 =============
 Training loop per UNetDenoiseAttack (v2).
 
-Miglioramenti rispetto all'originale:
-  1. Loss SSIM              : aggiunge un termine percettivo strutturale (oltre L1)
-                              che preserva meglio i dettagli visivi dell'immagine.
-  2. Loss adversariale BCE  : la loss bit-logit ora usa BCE (+ scaling) invece di
-                              L1 pura, per forzare i logit verso la distribuzione
-                              delle immagini pulite in modo più diretto.
-  3. Gradient Accumulation  : consente batch effettivi più grandi su GPU limitate.
-  4. Cosine Annealing LR    : scheduler più morbido con warm restart, evita i plateau
-                              improvvisi di ReduceLROnPlateau.
-  5. Linear Warmup          : evita spike di gradiente nelle prime epoche.
-  6. EarlyStopping          : ferma l'addestramento se val_loss non migliora per
-                              N epoche consecutive (evita overfitting e sprechi).
-  7. Checkpoint "last"      : salva anche l'ultimo checkpoint (non solo il best),
-                              utile per riprendere il training.
-  8. Phase scheduling migliorato : rampa w_adv ora segue una curva sigmoide per
-                                   una transizione più graduale.
+Miglioramenti apportati:
+  1. Loss Avversariale Corretta: Sostituita BCEWithLogitsLoss (che con target 0.5 mandava in 
+     stallo i gradienti) con L1Loss ancorata a 0.0 per distruggere il segnale.
+  2. Bilanciamento Pesi: Priorità all'attacco avversariale (W_ADV=8.0) rispetto alla 
+     conservazione visiva (W_IMG=2.0, W_SSIM=1.5) per forzare l'eliminazione del watermark.
+  3. Controllo dei Gradienti: Monitoraggio attivo ad ogni epoca per verificare che l'estrattore 
+     stia propagando i gradienti alla UNet senza interrompere il grafo computazionale.
 """
 
 import os
@@ -51,7 +42,6 @@ class SSIMLoss(nn.Module):
         self.ws = window_size
         kernel_1d = self._gaussian_kernel(window_size, sigma)
         kernel_2d = kernel_1d[:, None] * kernel_1d[None, :]       # (ws, ws)
-        # [1, 1, ws, ws] → ripetiamo sui canali nel forward
         self.register_buffer(
             "kernel", kernel_2d.unsqueeze(0).unsqueeze(0)
         )
@@ -109,7 +99,6 @@ def sigmoid_ramp(ep: int, phase1_end: int, phase2_end: int, w_max: float) -> flo
     if ep >= phase2_end:
         return w_max
     t = (ep - phase1_end) / (phase2_end - phase1_end)   # 0..1
-    # Sigmoid centrata a t=0.5
     s = 1.0 / (1.0 + math.exp(-10.0 * (t - 0.5)))
     return w_max * s
 
@@ -127,23 +116,23 @@ print(f"  GPU disponibili       : {num_gpus}")
 print("=" * 55)
 
 # ── Iperparametri ──
-BATCH_SIZE     = 16          # fisico per GPU
-ACCUM_STEPS    = 2           # batch effettivo = BATCH_SIZE * ACCUM_STEPS = 32
+BATCH_SIZE     = 16          
+ACCUM_STEPS    = 2           
 EPOCHS         = 120
 LEARNING_RATE  = 2e-4
 WARMUP_EPOCHS  = 5
 CROP_SIZE      = 256
 MAX_GRAD_NORM  = 1.0
-EARLY_STOP_PAT = 20          # patience per early stopping
+EARLY_STOP_PAT = 20          
 
-# ── Pesi loss ──
-W_IMG   = 8.0    # L1 pixel
-W_SSIM  = 4.0    # SSIM strutturale
-W_ADV   = 1.5    # adversariale sui bit-logit
+# ── Pesi loss bilanciati per favorire l'attacco avversariale ──
+W_IMG   = 2.0    # Ridotto (era 8.0) per permettere modifiche ai pixel del WM
+W_SSIM  = 1.5    # Ridotto (era 4.0)
+W_ADV   = 8.0    # Incrementato drasticamente (era 1.5) per distruggere i bit
 
-# ── Fasi curriculum ──
-PHASE1_END = 8    # solo loss immagine
-PHASE2_END = 50   # rampa sigmoide verso W_ADV
+# ── Fasi curriculum accelerate ──
+PHASE1_END = 4    # L'attacco avversariale entra prima in gioco (era 8)
+PHASE2_END = 30   # Raggiunge la massima potenza a epoca 30 (era 50)
 
 # ============================================================================
 # 2. DATASET
@@ -177,7 +166,6 @@ for p in detector.parameters():
 
 criterion_l1   = nn.L1Loss().to(device)
 criterion_ssim = SSIMLoss(window_size=11).to(device)
-criterion_bce  = nn.BCEWithLogitsLoss().to(device)
 
 if num_gpus > 1:
     model = nn.DataParallel(model)
@@ -193,7 +181,7 @@ os.makedirs("checkpoints", exist_ok=True)
 os.makedirs("checkpoints/progress_images", exist_ok=True)
 
 # ============================================================================
-# 4. FUNZIONI DI LOSS
+# 4. FUNZIONE DI LOSS
 # ============================================================================
 
 def compute_loss(
@@ -208,18 +196,15 @@ def compute_loss(
     Tre componenti:
       loss_l1   : fedeltà pixel (L1)
       loss_ssim : fedeltà strutturale (1 - SSIM)
-      loss_adv  : i bit logit dell'immagine attaccata devono avvicinarsi
-                  alla distribuzione 50/50 (logit ≈ 0) propria di un'immagine
-                  senza watermark.
+      loss_adv  : porta i bit logit a 0.0 via L1 per massimizzare l'incertezza
+                  dell'estrattore (bit accuracy -> 0.5) senza saturazione.
     """
     loss_l1   = criterion_l1(reconstructed, clean)
     loss_ssim = criterion_ssim(reconstructed, clean)
 
-    # Target avversariale: logit = 0 → probabilità 50/50 → watermark non rilevabile
-    # Usiamo BCE con target 0.5 (sigmoid(0) = 0.5)
-    adv_target = torch.full_like(logits_recon, 0.5)
-    # BCEWithLogitsLoss vuole target in [0,1]; 0.5 massimizza l'entropia
-    loss_adv = criterion_bce(logits_recon, adv_target)
+    # Ancoraggio dei logit a 0.0 usando la L1 per un gradiente stabile e costante
+    adv_target = torch.zeros_like(logits_recon)
+    loss_adv   = criterion_l1(logits_recon, adv_target)
 
     total = w_img * loss_l1 + w_ssim * loss_ssim + w_adv * loss_adv
     return total, loss_l1, loss_ssim, loss_adv
@@ -234,7 +219,7 @@ history = {k: [] for k in
      "val_total",   "val_l1",   "val_ssim",   "val_adv", "lr"]}
 
 best_val   = float("inf")
-no_improve = 0                        # contatore early stopping
+no_improve = 0                        
 
 print(f"\nInizio addestramento — {EPOCHS} epoche, batch effettivo={BATCH_SIZE*ACCUM_STEPS}\n")
 
@@ -260,8 +245,18 @@ for epoch in range(EPOCHS):
             total = total.mean(); l_l1 = l_l1.mean()
             l_ssim = l_ssim.mean(); l_adv = l_adv.mean()
 
-        # Gradient accumulation: scala la loss
+        # Gradient accumulation
         (total / ACCUM_STEPS).backward()
+
+        # --- MONITORAGGIO GRADIENTI (DEBUG TRACCIAMENTO ADVERSARIAL) ---
+        if step % 50 == 0:
+            first_layer_grad = model.module.enc1.conv[0].weight.grad if num_gpus > 1 else model.enc1.conv[0].weight.grad
+            if first_layer_grad is not None:
+                grad_mean = first_layer_grad.abs().mean().item()
+                if grad_mean == 0.0 and w_adv_cur > 0:
+                    print(f"⚠️ [Step {step}]: Gradiente nullo rilevato! Il detector potrebbe bloccare il grafo.")
+            else:
+                print(f"⚠️ [Step {step}]: Gradiente non inizializzato (None).")
 
         running["total"] += total.item()
         running["l1"]    += l_l1.item()
@@ -333,7 +328,7 @@ for epoch in range(EPOCHS):
     else:
         no_improve += 1
 
-    # Salviamo sempre l'ultimo checkpoint (per riprendere il training)
+    # Checkpoint di salvataggio dello stato corrente
     sd_last = model.module.state_dict() if num_gpus > 1 else model.state_dict()
     torch.save(
         {"epoch": ep, "state_dict": sd_last, "optimizer": optimizer.state_dict()},
@@ -362,7 +357,7 @@ print("\nAddestramento completato.")
 EPOCHS_RAN = len(history["train_total"])
 
 # ============================================================================
-# 6. CSV
+# 6. ESPORTAZIONE DATI STORICI (CSV)
 # ============================================================================
 
 pd.DataFrame({
@@ -379,7 +374,7 @@ pd.DataFrame({
 }).to_csv("unet_training_history.csv", index=False, sep=";")
 
 # ============================================================================
-# 7. GRAFICO A TRE PANNELLI
+# 7. GRAFICO DELLE METRICHE
 # ============================================================================
 
 epochs_ax = range(1, EPOCHS_RAN + 1)
@@ -387,7 +382,6 @@ fig, axes = plt.subplots(3, 1, figsize=(13, 12))
 colors = {"train": "#2563eb", "val": "#dc2626"}
 ls_val  = "--"
 
-# Pannello 1: Loss totale + LR (asse secondario)
 ax = axes[0]
 ax.plot(epochs_ax, history["train_total"], label="Train total", color=colors["train"], lw=2)
 ax.plot(epochs_ax, history["val_total"],   label="Val total",   color=colors["val"],   lw=2, ls=ls_val)
@@ -396,7 +390,6 @@ ax2 = ax.twinx()
 ax2.plot(epochs_ax, history["lr"], color="gray", lw=1, alpha=0.6, label="LR")
 ax2.set_ylabel("Learning Rate", color="gray"); ax2.tick_params(axis="y", labelcolor="gray")
 
-# Pannello 2: Componente immagine (L1 + SSIM)
 ax = axes[1]
 ax.plot(epochs_ax, history["train_l1"],   label="Train L1",   color="#1d4ed8", lw=2)
 ax.plot(epochs_ax, history["val_l1"],     label="Val L1",     color="#1d4ed8", lw=2, ls=ls_val)
@@ -404,13 +397,12 @@ ax.plot(epochs_ax, history["train_ssim"], label="Train SSIM", color="#7c3aed", l
 ax.plot(epochs_ax, history["val_ssim"],   label="Val SSIM",   color="#7c3aed", lw=2, ls=ls_val)
 ax.set_ylabel("Loss immagine"); ax.set_title("Componenti: L1 e SSIM"); ax.legend(); ax.grid(True, ls=":")
 
-# Pannello 3: Loss avversariale
 ax = axes[2]
-ax.plot(epochs_ax, history["train_adv"], label="Train Adv (BCE)",  color="#ea580c", lw=2)
-ax.plot(epochs_ax, history["val_adv"],   label="Val Adv (BCE)",    color="#ea580c", lw=2, ls=ls_val)
+ax.plot(epochs_ax, history["train_adv"], label="Train Adv (L1 anchored)",  color="#ea580c", lw=2)
+ax.plot(epochs_ax, history["val_adv"],   label="Val Adv (L1 anchored)",    color="#ea580c", lw=2, ls=ls_val)
 ax.set_xlabel("Epoche"); ax.set_ylabel("Loss avversariale"); ax.set_title("Loss Avversariale (bit-logit)"); ax.legend(); ax.grid(True, ls=":")
 
 plt.tight_layout()
 plt.savefig("unet_training_curves.png", dpi=300)
 plt.close()
-print("✅ CSV e grafico a tre pannelli salvati.")
+print("✅ CSV e grafici aggiornati salvati con successo.")
