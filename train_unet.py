@@ -32,9 +32,9 @@ MAX_GRAD_NORM = 1.0
 # PESI DELLA LOSS
 # ==========================================
 W_IMG = 10.0
-W_ADV = 2.0
+W_ADV = 1.0
 PHASE1_END = 5   
-PHASE2_END = 30  
+PHASE2_END = 40
 
 # ==========================================
 # 2. PREPARAZIONE DATI
@@ -68,7 +68,7 @@ if num_gpus > 1:
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode='min', factor=0.5, patience=7, verbose=True
+    optimizer, mode='min', factor=0.5, patience=10, verbose=True
 )
 
 os.makedirs("checkpoints", exist_ok=True)
