@@ -49,8 +49,6 @@ class UNetDenoiseAttack(nn.Module):
         self.up5      = nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2)
         self.conv_up5 = DoubleConv(32, 16)
 
-        # FIX 1: output residuale — la UNet predice il *rumore* da sottrarre,
-        # non l'immagine completa. Questo stabilizza molto la convergenza.
         self.outc = nn.Conv2d(16, out_channels, kernel_size=1)
 
     def forward(self, x, detector=None):
@@ -69,10 +67,6 @@ class UNetDenoiseAttack(nn.Module):
         t4 = self.conv_up4(torch.cat([self.up4(t3), x2], dim=1))
         t5 = self.conv_up5(torch.cat([self.up5(t4), x1], dim=1))
 
-        # FIX 1 (residual learning): predici solo il residuo da rimuovere.
-        # L'output è x - delta, clampato in [0,1]. Questo evita che sigmoid
-        # sature l'output e blocchi il gradiente, ed è più stabile di imparare
-        # l'immagine intera da zero.
         residual = torch.tanh(self.outc(t5))          # residuo in [-1, +1]
         reconstructed_imgs = torch.clamp(x + residual, 0.0, 1.0)
 

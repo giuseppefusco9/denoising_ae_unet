@@ -5,7 +5,7 @@ import videoseal
 
 from unet_attack_model import UNetDenoiseAttack
 
-# Wrapper strutturato ad uso esclusivo di torchinfo per mappare l'albero gerarchico completo
+
 class AttackAndEvaluationWrapper(nn.Module):
     def __init__(self):
         super().__init__()
@@ -16,17 +16,17 @@ class AttackAndEvaluationWrapper(nn.Module):
             param.requires_grad = False
 
     def forward(self, x):
-        # CORRETTO: Spacchettiamo tre argomenti per allinearci al nuovo metodo residuale della U-Net
-        reconstructed_imgs, detected_bit_logits, detection_score = self.unet(x, detector=self.detector)
-        return reconstructed_imgs, detected_bit_logits, detection_score
+        # Il forward di UNetDenoiseAttack restituisce 2 valori quando detector != None
+        reconstructed_imgs, detected_bit_logits = self.unet(x, detector=self.detector)
+        return reconstructed_imgs, detected_bit_logits
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model_to_analyze = AttackAndEvaluationWrapper().to(device)
 
-# Creazione del report tabellare txt
 model_summary = summary(
-    model_to_analyze, 
-    input_size=(32, 3, 256, 256), 
+    model_to_analyze,
+    input_size=(32, 3, 256, 256),
     col_names=["input_size", "output_size", "num_params", "kernel_size"],
     row_settings=["depth", "var_names"],
     depth=4,
