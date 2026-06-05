@@ -79,8 +79,6 @@ class UNetDenoiseAttack(nn.Module):
         if detector is not None:
             detector_outputs    = detector.detect(reconstructed_imgs)
             detected_bit_logits = detector_outputs["preds"][:, 1:]
-            # Restituiamo anche il logit di presenza watermark (canale 0)
-            detection_score     = detector_outputs["preds"][:, 0:1]
-            return reconstructed_imgs, detected_bit_logits, detection_score
+            return reconstructed_imgs, detected_bit_logits
 
         return reconstructed_imgs
