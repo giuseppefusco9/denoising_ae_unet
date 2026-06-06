@@ -19,7 +19,6 @@ num_gpus  = torch.cuda.device_count()
 
 print("=" * 50)
 print(f"Dispositivo Principale: {device}")
-print(f"Numero di GPU rilevate: {num_gpus}")
 print("=" * 50)
 
 BATCH_SIZE    = 32
@@ -61,9 +60,6 @@ for param in detector.parameters():
 
 criterion_img  = nn.L1Loss().to(device)
 criterion_bits = nn.L1Loss().to(device)
-
-if num_gpus > 1:
-    model = nn.DataParallel(model)
 
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
@@ -136,11 +132,6 @@ for epoch in range(EPOCHS):
             clean_imgs, W_IMG, w_adv_cur
         )
 
-        if num_gpus > 1:
-            total_loss = total_loss.mean()
-            loss_img   = loss_img.mean()
-            loss_adv   = loss_adv.mean()
-
         total_loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), max_norm=MAX_GRAD_NORM)
         optimizer.step()
@@ -172,11 +163,6 @@ for epoch in range(EPOCHS):
                 clean_imgs, W_IMG, w_adv_cur
             )
 
-            if num_gpus > 1:
-                total_val = total_val.mean()
-                loss_img  = loss_img.mean()
-                loss_adv  = loss_adv.mean()
-
             val_losses["total"] += total_val.item()
             val_losses["img"]   += loss_img.item()
             val_losses["adv"]   += loss_adv.item()
@@ -207,7 +193,7 @@ for epoch in range(EPOCHS):
 
     if cur_val_total < best_val_loss:
         best_val_loss     = cur_val_total
-        state_to_save     = model.module.state_dict() if num_gpus > 1 else model.state_dict()
+        state_to_save     = model.state_dict()
         torch.save(state_to_save, "checkpoints/unet_best.pth")
         print("  -> Nuovo record. Pesi salvati.")
 
