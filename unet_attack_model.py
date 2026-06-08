@@ -67,8 +67,7 @@ class UNetDenoiseAttack(nn.Module):
         t4 = self.conv_up4(torch.cat([self.up4(t3), x2], dim=1))
         t5 = self.conv_up5(torch.cat([self.up5(t4), x1], dim=1))
 
-        residual = torch.tanh(self.outc(t5))          # residuo in [-1, +1]
-        reconstructed_imgs = torch.clamp(x + residual, 0.0, 1.0)
+        reconstructed_imgs = (torch.tanh(self.outc(t5)) + 1) / 2
 
         if detector is not None:
             detector_outputs    = detector.detect(reconstructed_imgs)
