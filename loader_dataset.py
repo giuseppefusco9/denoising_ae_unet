@@ -3,29 +3,29 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms.functional as F
-import torchvision.transforms as T
 
 class WatermarkDenoisingDataset(Dataset):
-    def __init__(self, root_dir, crop_size=256):
+    def __init__(self, root_dir, crop_size=512):
         self.clean_dir = os.path.join(root_dir, 'clean_img')
         self.wm_dir = os.path.join(root_dir, 'wm_img')
-        self.crop_size = crop_size
+        self.crop_size = crop_size # Mantenuto per compatibilità, ma i file sul disco sono già 512
         self.valid_pairs = []
 
-        # Otteniamo le liste dei file
+        if not os.path.exists(self.clean_dir) or not os.path.exists(self.wm_dir):
+            print(f"⚠️ Cartelle non trovate in {root_dir}, dataset vuoto.")
+            return
+
         clean_files = os.listdir(self.clean_dir)
         wm_files = os.listdir(self.wm_dir)
 
         for c_file in clean_files:
-            # Cerca il corrispondente watermarked
-            matching_wm = [w for w in wm_files if c_file in w]
-            
-            if matching_wm:
-                # Salva la tupla con (nome_pulita, nome_watermarked)
-                self.valid_pairs.append((c_file, matching_wm[0]))
+            if c_file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                matching_wm = [w for w in wm_files if c_file in w]
+                if matching_wm:
+                    self.valid_pairs.append((c_file, matching_wm[0]))
 
         self.valid_pairs.sort()
-        print(f"Trovate {len(self.valid_pairs)} coppie di immagini valide nel dataset.")
+        print(f"Trovate {len(self.valid_pairs)} coppie di immagini valide nel dataset ({root_dir}).")
 
     def __len__(self):
         return len(self.valid_pairs)
@@ -39,23 +39,25 @@ class WatermarkDenoisingDataset(Dataset):
         clean_img = Image.open(clean_path).convert("RGB")
         wm_img = Image.open(wm_path).convert("RGB")
 
+        # Le immagini sul disco sono già 512x512 centrate dalla nuova pipeline.
+        # Rimuoviamo il RandomCrop dinamico per mantenere i volumi intatti e coerenti.
         clean_tensor = F.to_tensor(clean_img)
         wm_tensor = F.to_tensor(wm_img)
 
         return wm_tensor, clean_tensor
 
 # ==========================================
-# TEST
+# CORREZIONE DEL BLOCCO DI TEST EXTRA
 # ==========================================
 if __name__ == "__main__":
-    mio_dataset = WatermarkDenoisingDataset(root_dir="dataset", crop_size=256)
+    # Aggiornato il path puntando a dataset_minSize/train che esiste sul server
+    mio_dataset = WatermarkDenoisingDataset(root_dir="dataset_minSize/train", crop_size=512)
     
     if len(mio_dataset) > 0:
         mio_dataloader = DataLoader(mio_dataset, batch_size=4, shuffle=True)
         for batch_wm, batch_clean in mio_dataloader:
-            print(f"Formato Tensore Input (Watermarked): {batch_wm.shape}")
-            print(f"Formato Tensore Target (Pulito): {batch_clean.shape}")
-            print("Tutto funziona perfettamente! Pronto per l'addestramento.")
+            print(f"✅ Verifica Superata!")
+            print(f"  -> Formato Tensore Input (Watermarked): {batch_wm.shape}")
+            print(f"  -> Formato Tensore Target (Clean):       {batch_clean.shape}")
+            print(f"  -> Range valori: [{batch_wm.min().item():.2f}, {batch_wm.max().item():.2f}]")
             break
-    else:
-        print("ATTENZIONE: Ancora 0 file trovati. Verifica che la cartella 'dataset' sia dentro 'denoising_ae'.")
