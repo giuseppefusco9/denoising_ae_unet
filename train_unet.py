@@ -21,7 +21,7 @@ print("=" * 50)
 print(f"Dispositivo Principale: {device}")
 print("=" * 50)
 
-BATCH_SIZE    = 32
+BATCH_SIZE    = 12
 EPOCHS        = 100
 LEARNING_RATE = 2e-5
 CROP_SIZE     = 512
