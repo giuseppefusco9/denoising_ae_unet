@@ -9,6 +9,7 @@ import videoseal
 # ==========================================
 # CONFIGURAZIONE PATH E PARAMETRI
 # ==========================================
+CROP_SIZE = 512
 SOURCE_DIR = "dataset/clean_img"
 OUT_ROOT = "dataset_minSize"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -59,18 +60,16 @@ def main():
             img = Image.open(img_path).convert("RGB")
             base_name, ext = os.path.splitext(f)
             
-            for i in range(4):
-                top, left, h, w = T.RandomCrop.get_params(img, output_size=(min_size, min_size))
-                cropped_img = TF.crop(img, top, left, h, w)
+            # Sostituzione con Center Crop nativo senza resize
+            cropped_img = TF.center_crop(img, output_size=(CROP_SIZE, CROP_SIZE))
+            
+            crop_filename = f"{base_name}_center{CROP_SIZE}{ext}"
+            clean_save_path = os.path.join(clean_out_dir, crop_filename)
+            cropped_img.save(clean_save_path)
+            
+            img_tensor = TF.to_tensor(cropped_img).unsqueeze(0).to(DEVICE)
                 
-                crop_filename = f"{base_name}_crop{i}{ext}"
-                clean_save_path = os.path.join(clean_out_dir, crop_filename)
-                cropped_img.save(clean_save_path)
-                
-                # Tensore in ingresso [1, 3, min_size, min_size]
-                img_tensor = TF.to_tensor(cropped_img).unsqueeze(0).to(DEVICE)
-                
-                with torch.no_grad():
+            with torch.no_grad():
                     embed_result = pixelseal.embed(img_tensor)
                     
                     wm_tensor = None
@@ -98,13 +97,13 @@ def main():
                     else:
                         raise TypeError(f"Formato output inatteso: {type(embed_result)}")
 
-                # Assicuriamoci di rimuovere la dimensione batch [1, C, H, W] -> [C, H, W]
-                if wm_tensor.dim() == 4 and wm_tensor.shape[0] == 1:
-                     wm_tensor = wm_tensor.squeeze(0)
+            if wm_tensor.dim() == 4 and wm_tensor.shape[0] == 1:
+                wm_tensor = wm_tensor.squeeze(0)
 
-                wm_img_pil = TF.to_pil_image(wm_tensor.cpu())
-                wm_save_path = os.path.join(wm_out_dir, crop_filename)
-                wm_img_pil.save(wm_save_path)
+            wm_img_pil = TF.to_pil_image(wm_tensor.cpu())
+            wm_save_path = os.path.join(wm_out_dir, crop_filename)
+            wm_img_pil.save(wm_save_path)
+            
                 
     print(f"\n🎉 Generazione completata! Dataset salvato nella cartella: {OUT_ROOT}")
 

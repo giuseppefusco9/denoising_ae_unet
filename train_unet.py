@@ -24,7 +24,7 @@ print("=" * 50)
 BATCH_SIZE    = 32
 EPOCHS        = 100
 LEARNING_RATE = 2e-5
-CROP_SIZE     = 256
+CROP_SIZE     = 512
 MAX_GRAD_NORM = 1.0
 
 # ==========================================

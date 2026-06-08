@@ -66,16 +66,12 @@ for idx, (clean_name, wm_name) in enumerate(valid_pairs):
     wm_path = os.path.join(wm_dir, wm_name)
     clean_path = os.path.join(clean_dir, clean_name)
     
-    # Carichiamo ENTRAMBE le immagini (Pulita e Watermarked)
     img_wm = Image.open(wm_path).convert("RGB")
     img_clean = Image.open(clean_path).convert("RGB")
     
-    w, h = img_wm.size
-    
-    # Padding a multipli di 16 per i MaxPool2d
-    new_w, new_h = math.ceil(w/16)*16, math.ceil(h/16)*16
-    img_wm_tensor = F.to_tensor(F.pad(img_wm, (0, 0, new_w-w, new_h-h), padding_mode='reflect')).unsqueeze(0).to(device)
-    img_clean_tensor = F.to_tensor(F.pad(img_clean, (0, 0, new_w-w, new_h-h), padding_mode='reflect')).unsqueeze(0).to(device)
+    # Rimuoviamo la logica di padding math.ceil(w/16)*16 e usiamo il tensore nativo 512x512
+    img_wm_tensor = F.to_tensor(img_wm).unsqueeze(0).to(device)
+    img_clean_tensor = F.to_tensor(img_clean).unsqueeze(0).to(device)
     
     with torch.no_grad():
         # --- A. Analisi REALE Immagine Pulita ---
@@ -88,7 +84,7 @@ for idx, (clean_name, wm_name) in enumerate(valid_pairs):
         logit_before = det_before["preds"][:, 0].item()
         bits_before = (det_before["preds"][:, 1:] > 0).float()
         
-        # --- C. Esecuzione Attacco ---
+        # --- C. Esecuzione Attacco (Ora lavora su un volume coerente 512x512) ---
         cleaned_tensor = model(img_wm_tensor)
         
         # --- D. Analisi REALE Immagine Attaccata ---
@@ -96,13 +92,13 @@ for idx, (clean_name, wm_name) in enumerate(valid_pairs):
         logit_after = det_after["preds"][:, 0].item()
         bits_after = (det_after["preds"][:, 1:] > 0).float()
         
-        # Calcolo Bit Accuracy Reali (usando i bit estratti dall'immagine WM come ground truth)
+        # Calcolo Bit Accuracy Reali
         bit_acc_clean = (bits_clean == bits_before).sum().item() / msg_size
-        bit_acc_before = (bits_before == bits_before).sum().item() / msg_size # Logicamente 1.0, ma calcolato
+        bit_acc_before = (bits_before == bits_before).sum().item() / msg_size 
         bit_acc_after = (bits_after == bits_before).sum().item() / msg_size
 
-    # Salviamo l'immagine tagliando via il padding aggiunto
-    final_img = F.to_pil_image(cleaned_tensor[0, :, :h, :w].cpu())
+    # Salviamo l'immagine direttamente senza dover tagliare via il padding
+    final_img = F.to_pil_image(cleaned_tensor[0].cpu())
     final_img.save(os.path.join(OUTPUT_DIR, f"cleaned_{clean_name}"))
     
     # --------------------------------------------------

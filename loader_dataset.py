@@ -39,13 +39,8 @@ class WatermarkDenoisingDataset(Dataset):
         clean_img = Image.open(clean_path).convert("RGB")
         wm_img = Image.open(wm_path).convert("RGB")
 
-        # Ritaglio sincronizzato
-        i, j, h, w = T.RandomCrop.get_params(clean_img, output_size=(self.crop_size, self.crop_size))
-        clean_cropped = F.crop(clean_img, i, j, h, w)
-        wm_cropped = F.crop(wm_img, i, j, h, w)
-
-        clean_tensor = F.to_tensor(clean_cropped)
-        wm_tensor = F.to_tensor(wm_cropped)
+        clean_tensor = F.to_tensor(clean_img)
+        wm_tensor = F.to_tensor(wm_img)
 
         return wm_tensor, clean_tensor
 
