@@ -9,17 +9,16 @@ from unet_attack_model import UNetDenoiseAttack
 class AttackAndEvaluationWrapper(nn.Module):
     def __init__(self):
         super().__init__()
-        self.unet = UNetDenoiseAttack(in_channels=3, out_channels=3)
         self.detector = videoseal.load("pixelseal")
         self.detector.eval()
         for param in self.detector.parameters():
             param.requires_grad = False
 
-    def forward(self, x):
-        # Il forward di UNetDenoiseAttack restituisce 2 valori quando detector != None
-        reconstructed_imgs, detected_bit_logits = self.unet(x, detector=self.detector)
-        return reconstructed_imgs, detected_bit_logits
+        self.unet = UNetDenoiseAttack(in_channels=3, out_channels=3, detector=self.detector)
 
+    def forward(self, x):
+        reconstructed_imgs, detected_bit_logits = self.unet(x)
+        return reconstructed_imgs, detected_bit_logits
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model_to_analyze = AttackAndEvaluationWrapper().to(device)
