@@ -25,7 +25,7 @@ model_to_analyze = AttackAndEvaluationWrapper().to(device)
 
 model_summary = summary(
     model_to_analyze,
-    input_size=(12, 3, 512, 512),
+    input_size=(12, 3, 256, 256),
     col_names=["input_size", "output_size", "num_params", "kernel_size"],
     row_settings=["depth", "var_names"],
     depth=4,
