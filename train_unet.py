@@ -154,9 +154,7 @@ for epoch in range(EPOCHS):
             wm_imgs    = wm_imgs.to(device)
             clean_imgs = clean_imgs.to(device)
 
-            reconstructed_imgs, logits_reconstructed = model(
-                wm_imgs, detector=detector
-            )
+            reconstructed_imgs, logits_reconstructed = model(wm_imgs)
 
             total_val, loss_img, loss_adv = compute_loss(
                 reconstructed_imgs, logits_reconstructed,
