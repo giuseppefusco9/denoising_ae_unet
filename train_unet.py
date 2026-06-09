@@ -30,10 +30,10 @@ MAX_GRAD_NORM = 1.0
 # ==========================================
 # PESI DELLA LOSS
 # ==========================================
-W_IMG = 10.0
+W_IMG = 0.0
 W_ADV = 1.0
-PHASE1_END = 5   
-PHASE2_END = 40
+PHASE1_END = -1
+PHASE2_END = -1
 
 # ==========================================
 # 2. PREPARAZIONE DATI
@@ -50,11 +50,13 @@ val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False,
 # ==========================================
 # 3. INIZIALIZZAZIONE MODELLI
 # ==========================================
-model = UNetDenoiseAttack(in_channels=3, out_channels=3).to(device)
-
 print("Caricamento detector PixelSeal...")
 detector = videoseal.load("pixelseal").to(device)
 detector.eval()
+
+model = UNetDenoiseAttack(in_channels=3, out_channels=3, detector=detector).to(device)
+
+
 for param in detector.parameters():
     param.requires_grad = False
 
@@ -123,9 +125,7 @@ for epoch in range(EPOCHS):
 
         optimizer.zero_grad()
 
-        reconstructed_imgs, logits_reconstructed = model(
-            wm_imgs, detector=detector
-        )
+        reconstructed_imgs, logits_reconstructed = model(wm_imgs)
 
         total_loss, loss_img, loss_adv = compute_loss(
             reconstructed_imgs, logits_reconstructed,

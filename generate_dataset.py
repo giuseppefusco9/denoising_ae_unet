@@ -13,7 +13,7 @@ SOURCE_DIR = "dataset/clean_img"
 OUT_ROOT = "dataset_minSize"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-TARGET_SIZE = 512  # Dimensione finale perfetta potenza del 2 per la U-Net
+TARGET_SIZE = 256  # Dimensione finale perfetta potenza del 2 per la U-Net
 random.seed(42)
 
 def main():
