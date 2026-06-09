@@ -9,15 +9,15 @@ import videoseal
 # ==========================================
 # CONFIGURAZIONE PATH E PARAMETRI
 # ==========================================
-CROP_SIZE = 512
 SOURCE_DIR = "dataset/clean_img"
 OUT_ROOT = "dataset_minSize"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+TARGET_SIZE = 512  # Dimensione finale perfetta potenza del 2 per la U-Net
 random.seed(42)
 
 def main():
-    print("🔍 Ricerca della dimensione minima nel dataset...")
+    print("Ricerca della dimensione minima nel dataset originario...")
     files = [f for f in os.listdir(SOURCE_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
     
     if len(files) == 0:
@@ -31,7 +31,7 @@ def main():
             w, h = img.size
             min_size = min(min_size, w, h)
             
-    print(f"✅ Dimensione minima trovata: {min_size}x{min_size}")
+    print(f"Dimensione minima trovata: {min_size}x{min_size}")
     random.shuffle(files)
     
     splits = {
@@ -40,7 +40,7 @@ def main():
         "test": files[75:]
     }
 
-    print(f"🛡️ Caricamento modello PixelSeal su {DEVICE}...")
+    print(f"Caricamento modello PixelSeal su {DEVICE}...")
     try:
         pixelseal = videoseal.load("pixelseal").to(DEVICE).eval()
     except Exception as e:
@@ -48,7 +48,7 @@ def main():
         return
     
     for split_name, split_files in splits.items():
-        print(f"\n⚙️ Generazione set: {split_name.upper()} ({len(split_files)} immagini base -> {len(split_files)*4} ritagli)")
+        print(f"\nGenerazione set: {split_name.upper()} ({len(split_files)} immagini base -> {len(split_files)*4} ritagli combinati)")
         
         clean_out_dir = os.path.join(OUT_ROOT, split_name, "clean_img")
         wm_out_dir = os.path.join(OUT_ROOT, split_name, "wm_img")
@@ -60,25 +60,27 @@ def main():
             img = Image.open(img_path).convert("RGB")
             base_name, ext = os.path.splitext(f)
             
-            # Sostituzione con Center Crop nativo senza resize
-            cropped_img = TF.center_crop(img, output_size=(CROP_SIZE, CROP_SIZE))
-            
-            crop_filename = f"{base_name}_center{CROP_SIZE}{ext}"
-            clean_save_path = os.path.join(clean_out_dir, crop_filename)
-            cropped_img.save(clean_save_path)
-            
-            img_tensor = TF.to_tensor(cropped_img).unsqueeze(0).to(DEVICE)
+            # Generiamo i 4 crop per immagine base
+            for i in range(4):
+                # --- STADIO 1: Random Crop alla dimensione minima (534x534) ---
+                top, left, h, w = T.RandomCrop.get_params(img, output_size=(min_size, min_size))
+                random_cropped = TF.crop(img, top, left, h, w)
                 
-            with torch.no_grad():
+                # --- STADIO 2: Center Crop sul ritaglio precedente per portarlo a 512x512 ---
+                final_cropped = TF.center_crop(random_cropped, output_size=(TARGET_SIZE, TARGET_SIZE))
+                
+                crop_filename = f"{base_name}_crop{i}{ext}"
+                clean_save_path = os.path.join(clean_out_dir, crop_filename)
+                final_cropped.save(clean_save_path)
+                
+                # Il tensore risultante in ingresso a PixelSeal è ora un perfetto [1, 3, 512, 512]
+                img_tensor = TF.to_tensor(final_cropped).unsqueeze(0).to(DEVICE)
+                
+                with torch.no_grad():
                     embed_result = pixelseal.embed(img_tensor)
-                    
                     wm_tensor = None
                     
-                    # ----------------------------------------------------
-                    # ESTRAZIONE DELL'OUTPUT
-                    # ----------------------------------------------------
                     if isinstance(embed_result, dict):
-                        # Cerca dinamicamente un tensore con le stesse dimensioni dell'input
                         for key, value in embed_result.items():
                             if isinstance(value, torch.Tensor) and value.shape == img_tensor.shape:
                                 wm_tensor = value
@@ -88,7 +90,7 @@ def main():
                                 break
                         
                         if wm_tensor is None:
-                            raise ValueError(f"Tensore non trovato! Chiavi generate da Meta: {list(embed_result.keys())}")
+                            raise ValueError(f"Tensore non trovato. Chiavi generate da Meta: {list(embed_result.keys())}")
                             
                     elif isinstance(embed_result, torch.Tensor):
                         wm_tensor = embed_result
@@ -97,15 +99,17 @@ def main():
                     else:
                         raise TypeError(f"Formato output inatteso: {type(embed_result)}")
 
-            if wm_tensor.dim() == 4 and wm_tensor.shape[0] == 1:
-                wm_tensor = wm_tensor.squeeze(0)
+                if wm_tensor.dim() == 4 and wm_tensor.shape[0] == 1:
+                     wm_tensor = wm_tensor.squeeze(0)
 
-            wm_img_pil = TF.to_pil_image(wm_tensor.cpu())
-            wm_save_path = os.path.join(wm_out_dir, crop_filename)
-            wm_img_pil.save(wm_save_path)
-            
+                # Sbarramento protettivo pre-salvataggio sui canali float
+                wm_tensor = torch.clamp(wm_tensor, min=0.0, max=1.0)
+
+                wm_img_pil = TF.to_pil_image(wm_tensor.cpu())
+                wm_save_path = os.path.join(wm_out_dir, crop_filename)
+                wm_img_pil.save(wm_save_path)
                 
-    print(f"\n🎉 Generazione completata! Dataset salvato nella cartella: {OUT_ROOT}")
+    print(f"\nPipeline conclusa con successo. Dataset generato a {TARGET_SIZE}x{TARGET_SIZE} nella cartella: {OUT_ROOT}")
 
 if __name__ == "__main__":
     main()
