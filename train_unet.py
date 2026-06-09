@@ -21,10 +21,9 @@ print("=" * 50)
 print(f"Dispositivo Principale: {device}")
 print("=" * 50)
 
-BATCH_SIZE    = 12
-EPOCHS        = 100
+BATCH_SIZE    = 32
+EPOCHS        = 1000
 LEARNING_RATE = 2e-5
-CROP_SIZE     = 512
 MAX_GRAD_NORM = 1.0
 
 # ==========================================
@@ -39,8 +38,8 @@ PHASE2_END = -1
 # 2. PREPARAZIONE DATI
 # ==========================================
 print("Caricamento dataset...")
-train_dataset = WatermarkDenoisingDataset(root_dir="dataset_minSize/train", crop_size=CROP_SIZE)
-val_dataset   = WatermarkDenoisingDataset(root_dir="dataset_minSize/val",   crop_size=CROP_SIZE)
+train_dataset = WatermarkDenoisingDataset(root_dir="dataset_minSize/train")
+val_dataset   = WatermarkDenoisingDataset(root_dir="dataset_minSize/val")
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,
                           num_workers=4, pin_memory=True)
@@ -78,10 +77,14 @@ history = {
 }
 
 # ==========================================
-# 4. TRAINING LOOP
+# 4. TRAINING LOOP WITH EARLY STOPPING
 # ==========================================
 print(f"\nInizio Addestramento su {EPOCHS} epoche...\n")
 best_val_loss = float('inf')
+
+# Parametri Early Stopping richiesti
+PATIENCE = 19
+patience_counter = 0
 
 
 def compute_loss(reconstructed_imgs, logits_reconstructed,
@@ -189,19 +192,32 @@ for epoch in range(EPOCHS):
         f"adv={history['val_adv'][-1]:.4f}"
     )
 
+    # --- Logica di Controllo Early Stopping ---
     if cur_val_total < best_val_loss:
         best_val_loss     = cur_val_total
         state_to_save     = model.state_dict()
         torch.save(state_to_save, "checkpoints/unet_best.pth")
         print("  -> Nuovo record. Pesi salvati.")
+        patience_counter = 0  # Ripristina la pazienza se la loss migliora
+    else:
+        patience_counter += 1
+        print(f"  -> Nessun miglioramento. Early Stopping: {patience_counter}/{PATIENCE}")
+        
+        if patience_counter >= PATIENCE:
+            print(f"\n🛑 Early Stopping attivato! Nessun miglioramento della Val Loss per {PATIENCE} epoche consecutive.")
+            print(f"L'addestramento si interrompe all'epoca {ep}. Pesi migliori conservati.")
+            break
 
 print("\nAddestramento Completato.")
+
+# Calcoliamo il numero reale di epoche completate prima dell'interruzione
+actual_epochs = len(history["train_total"])
 
 # ==========================================
 # 5. CSV
 # ==========================================
 pd.DataFrame({
-    "Epoca":         range(1, EPOCHS + 1),
+    "Epoca":         range(1, actual_epochs + 1),
     "Train_Total":   history["train_total"],
     "Train_Img_L1":  history["train_img"],
     "Train_Adv_L1":  history["train_adv"],
@@ -213,7 +229,7 @@ pd.DataFrame({
 # ==========================================
 # 6. GRAFICO A DUE PANNELLI
 # ==========================================
-epochs_axis = range(1, EPOCHS + 1)
+epochs_axis = range(1, actual_epochs + 1)
 fig, axes = plt.subplots(2, 1, figsize=(12, 10))
 
 # Pannello 1: Loss totale
@@ -224,7 +240,7 @@ ax.set_ylabel("Loss Totale")
 ax.set_title("Loss Totale Combinata")
 ax.legend(); ax.grid(True, ls=":")
 
-# Pannello 2: Componenti separate (stesso ordine di grandezza grazie al bilanciamento)
+# Pannello 2: Componenti separate
 ax = axes[1]
 ax.plot(epochs_axis, history["train_img"], label="Train Img (L1)",      color="blue",   lw=2)
 ax.plot(epochs_axis, history["val_img"],   label="Val Img (L1)",        color="blue",   lw=2, ls="--")

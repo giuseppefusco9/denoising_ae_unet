@@ -5,10 +5,9 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms.functional as F
 
 class WatermarkDenoisingDataset(Dataset):
-    def __init__(self, root_dir, crop_size=512):
+    def __init__(self, root_dir):
         self.clean_dir = os.path.join(root_dir, 'clean_img')
         self.wm_dir = os.path.join(root_dir, 'wm_img')
-        self.crop_size = crop_size # Mantenuto per compatibilità, ma i file sul disco sono già 512
         self.valid_pairs = []
 
         if not os.path.exists(self.clean_dir) or not os.path.exists(self.wm_dir):
@@ -51,7 +50,7 @@ class WatermarkDenoisingDataset(Dataset):
 # ==========================================
 if __name__ == "__main__":
     # Aggiornato il path puntando a dataset_minSize/train che esiste sul server
-    mio_dataset = WatermarkDenoisingDataset(root_dir="dataset_minSize/train", crop_size=512)
+    mio_dataset = WatermarkDenoisingDataset(root_dir="dataset_minSize/train")
     
     if len(mio_dataset) > 0:
         mio_dataloader = DataLoader(mio_dataset, batch_size=12, shuffle=True)
