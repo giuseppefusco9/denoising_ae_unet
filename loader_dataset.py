@@ -54,7 +54,7 @@ if __name__ == "__main__":
     mio_dataset = WatermarkDenoisingDataset(root_dir="dataset_minSize/train", crop_size=512)
     
     if len(mio_dataset) > 0:
-        mio_dataloader = DataLoader(mio_dataset, batch_size=4, shuffle=True)
+        mio_dataloader = DataLoader(mio_dataset, batch_size=12, shuffle=True)
         for batch_wm, batch_clean in mio_dataloader:
             print(f"✅ Verifica Superata!")
             print(f"  -> Formato Tensore Input (Watermarked): {batch_wm.shape}")

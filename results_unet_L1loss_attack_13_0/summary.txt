@@ -77,8 +77,9 @@ AttackAndEvaluationWrapper (AttackAndEvaluationWrapper)           [12, 3, 512, 5
 │    │    │    └─BatchNorm2d (4): 4-40                            [12, 16, 512, 512]        [12, 16, 512, 512]        32                        --
 │    │    │    └─ReLU (5): 4-41                                   [12, 16, 512, 512]        [12, 16, 512, 512]        --                        --
 │    └─Conv2d (outc): 2-17                                        [12, 16, 512, 512]        [12, 3, 512, 512]         51                        [1, 1]
+│    └─TanhNorm (activ_out): 2-18                                 [12, 3, 512, 512]         [12, 3, 512, 512]         --                        --
 ├─Videoseal (detector): 1-2                                       --                        --                        43,805,388                --
-│    └─ConvnextExtractor (detector): 2-18                         [12, 3, 256, 256]         [12, 257]                 --                        --
+│    └─ConvnextExtractor (detector): 2-19                         [12, 3, 256, 256]         [12, 257]                 --                        --
 │    │    └─ConvNeXtV2 (convnext): 3-17                           [12, 3, 256, 256]         [12, 768, 8, 8]           --                        --
 │    │    │    └─ModuleList (downsample_layers): 4-48             --                        --                        (recursive)               --
 │    │    │    └─ModuleList (stages): 4-49                        --                        --                        (recursive)               --

@@ -19,6 +19,15 @@ class DoubleConv(nn.Module):
         return self.conv(x)
 
 
+class TanhNorm(nn.Module):
+    """
+    Attivazione finale: (tanh(x) + 1) / 2.
+    Output in [0, 1].
+    """
+    def forward(self, x):
+        return (torch.tanh(x) + 1) / 2
+
+
 class UNetDenoiseAttack(nn.Module):
     def __init__(self, in_channels=3, out_channels=3):
         super().__init__()
@@ -49,7 +58,9 @@ class UNetDenoiseAttack(nn.Module):
         self.up5      = nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2)
         self.conv_up5 = DoubleConv(32, 16)
 
-        self.outc = nn.Conv2d(16, out_channels, kernel_size=1)
+        # Convoluzione finale + attivazione registrata come modulo
+        self.outc      = nn.Conv2d(16, out_channels, kernel_size=1)
+        self.activ_out = TanhNorm()   # visibile nel summary e nei checkpoint
 
     def forward(self, x, detector=None):
         # --- Encoder ---
@@ -67,7 +78,7 @@ class UNetDenoiseAttack(nn.Module):
         t4 = self.conv_up4(torch.cat([self.up4(t3), x2], dim=1))
         t5 = self.conv_up5(torch.cat([self.up5(t4), x1], dim=1))
 
-        reconstructed_imgs = (torch.tanh(self.outc(t5)) + 1) / 2
+        reconstructed_imgs = self.activ_out(self.outc(t5))
 
         if detector is not None:
             detector_outputs    = detector.detect(reconstructed_imgs)
