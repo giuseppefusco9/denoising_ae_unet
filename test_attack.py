@@ -24,7 +24,9 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # 2. CARICAMENTO E PULIZIA PESI MULTI-GPU
 # ==========================================
 print("Caricamento UNet su raptor01...")
-model = UNetDenoiseAttack(in_channels=3, out_channels=3).to(device)
+print("Caricamento PixelSeal per la verifica...")
+pixelseal = videoseal.load("pixelseal").eval()
+model = UNetDenoiseAttack(in_channels=3, out_channels=3, detector=pixelseal).to(device)
 
 # Carichiamo i pesi addestrati
 state_dict = torch.load("checkpoints/unet_best.pth", map_location=device, weights_only=True)
@@ -37,9 +39,6 @@ for k, v in state_dict.items():
 
 model.load_state_dict(new_state_dict)
 model.eval()
-
-print("Caricamento PixelSeal per la verifica...")
-pixelseal = videoseal.load("pixelseal").eval()
 
 # ==========================================
 # 3. LOOP DI INFERENZA AD ALTA RISOLUZIONE
