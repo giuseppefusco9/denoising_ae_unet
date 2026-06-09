@@ -84,7 +84,7 @@ for idx, (clean_name, wm_name) in enumerate(valid_pairs):
         bits_before = (det_before["preds"][:, 1:] > 0).float()
         
         # --- C. Esecuzione Attacco (Ora lavora su un volume coerente 512x512) ---
-        cleaned_tensor = model(img_wm_tensor)
+        cleaned_tensor, _ = model(img_wm_tensor)
         
         # --- D. Analisi REALE Immagine Attaccata ---
         det_after = pixelseal.detect(cleaned_tensor.cpu())
