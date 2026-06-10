@@ -59,8 +59,8 @@ model = UNetDenoiseAttack(in_channels=3, out_channels=3, detector=detector).to(d
 for param in detector.parameters():
     param.requires_grad = False
 
-criterion_img  = nn.L1Loss().to(device)
-criterion_bits = nn.L1Loss().to(device)
+criterion_img  = nn.MSELoss().to(device)
+criterion_bits = nn.MSELoss().to(device)
 
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
