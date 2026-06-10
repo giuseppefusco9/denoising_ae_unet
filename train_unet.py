@@ -219,11 +219,11 @@ actual_epochs = len(history["train_total"])
 pd.DataFrame({
     "Epoca":         range(1, actual_epochs + 1),
     "Train_Total":   history["train_total"],
-    "Train_Img_L1":  history["train_img"],
-    "Train_Adv_L1":  history["train_adv"],
+    "Train_Img_mse":  history["train_img"],
+    "Train_Adv_mse":  history["train_adv"],
     "Val_Total":     history["val_total"],
-    "Val_Img_L1":    history["val_img"],
-    "Val_Adv_L1":    history["val_adv"],
+    "Val_Img_mse":    history["val_img"],
+    "Val_Adv_mse":    history["val_adv"],
 }).to_csv("unet_separated_losses.csv", index=False, sep=";")
 
 # ==========================================
@@ -242,10 +242,10 @@ ax.legend(); ax.grid(True, ls=":")
 
 # Pannello 2: Componenti separate
 ax = axes[1]
-ax.plot(epochs_axis, history["train_img"], label="Train Img (L1)",      color="blue",   lw=2)
-ax.plot(epochs_axis, history["val_img"],   label="Val Img (L1)",        color="blue",   lw=2, ls="--")
-ax.plot(epochs_axis, history["train_adv"], label="Train Bit-Logit (L1)", color="orange", lw=2)
-ax.plot(epochs_axis, history["val_adv"],   label="Val Bit-Logit (L1)",  color="orange", lw=2, ls="--")
+ax.plot(epochs_axis, history["train_img"], label="Train Img (mse)",      color="blue",   lw=2)
+ax.plot(epochs_axis, history["val_img"],   label="Val Img (mse)",        color="blue",   lw=2, ls="--")
+ax.plot(epochs_axis, history["train_adv"], label="Train Bit-Logit (mse)", color="orange", lw=2)
+ax.plot(epochs_axis, history["val_adv"],   label="Val Bit-Logit (mse)",  color="orange", lw=2, ls="--")
 ax.set_xlabel("Epochs")
 ax.set_ylabel("Loss Componente (Valore Puro)")
 ax.set_title("Analisi Separata delle Componenti")
