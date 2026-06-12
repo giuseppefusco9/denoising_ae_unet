@@ -65,7 +65,7 @@ criterion_bits = nn.MSELoss().to(device)
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode='min', factor=0.5, patience=10, verbose=True
+    optimizer, mode='min', factor=0.5, patience=15, verbose=True
 )
 
 os.makedirs("checkpoints", exist_ok=True)
@@ -83,7 +83,7 @@ print(f"\nInizio Addestramento su {EPOCHS} epoche...\n")
 best_val_loss = float('inf')
 
 # Parametri Early Stopping richiesti
-PATIENCE = 19
+PATIENCE = 44
 patience_counter = 0
 
 
