@@ -22,17 +22,19 @@ print(f"Dispositivo Principale: {device}")
 print("=" * 50)
 
 BATCH_SIZE    = 32
-EPOCHS        = 1000
+EPOCHS        = 400
 LEARNING_RATE = 2e-5
 MAX_GRAD_NORM = 1.0
 
 # ==========================================
 # PESI DELLA LOSS
 # ==========================================
-W_IMG = 1.0
-W_ADV = 0.0
-PHASE1_END = -1
-PHASE2_END = -1
+# W_ADV sale linearmente da 0 a 1 nelle epoche 1-200,
+# poi rimane a 1 per le epoche 201-400. W_IMG fisso a 1 per tutto il training.
+W_IMG      = 1.0
+W_ADV      = 1.0   # valore target finale
+PHASE1_END = 0     # nessuna fase statica a w_adv=0 (warmup parte da ep 1)
+PHASE2_END = 200   # fine rampa lineare 0→1
 
 # ==========================================
 # 2. PREPARAZIONE DATI
@@ -55,6 +57,10 @@ detector.eval()
 
 model = UNetDenoiseAttack(in_channels=3, out_channels=3, detector=detector).to(device)
 
+# load del checkpoint pre-addestrato (v4_0) per inizializzare i pesi del modello U-Net
+ckpt = torch.load("checkpoints/unet_best_v4_0.pth", map_location=device, weights_only=True)
+model.load_state_dict(ckpt)
+print("Checkpoint v4_0 caricato correttamente.")
 
 for param in detector.parameters():
     param.requires_grad = False
@@ -64,9 +70,11 @@ criterion_bits = nn.MSELoss().to(device)
 
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode='min', factor=0.5, patience=15, verbose=True
-)
+# LROnPlateau disabilitato per questo esperimento osservazionale:
+# LR fisso permette di leggere la curva di loss senza interferenze dello scheduler.
+# lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+#     optimizer, mode='min', factor=0.5, patience=15, verbose=True
+# )
 
 os.makedirs("checkpoints", exist_ok=True)
 os.makedirs("checkpoints/progress_images", exist_ok=True)
@@ -82,9 +90,10 @@ history = {
 print(f"\nInizio Addestramento su {EPOCHS} epoche...\n")
 best_val_loss = float('inf')
 
-# Parametri Early Stopping richiesti
-PATIENCE = 44
-patience_counter = 0
+# Early stopping disabilitato per questo esperimento: si vuole osservare
+# l'intera curva di loss su 400 epoche senza interruzioni anticipate.
+# PATIENCE = 44
+# patience_counter = 0
 
 
 def compute_loss(reconstructed_imgs, logits_reconstructed,
@@ -182,7 +191,7 @@ for epoch in range(EPOCHS):
         history[f"val_{k}"].append(val_losses[k] / n_val)
 
     cur_val_total = history["val_total"][-1]
-    lr_scheduler.step(cur_val_total)
+    # lr_scheduler.step(cur_val_total)  # disabilitato: LR fisso per questo esperimento
 
     print(
         f"Ep [{ep:3d}/{EPOCHS}] | w_adv={w_adv_cur:.2f} | "
@@ -192,21 +201,21 @@ for epoch in range(EPOCHS):
         f"adv={history['val_adv'][-1]:.4f}"
     )
 
-    # --- Logica di Controllo Early Stopping ---
+    # --- Salvataggio miglior checkpoint ---
     if cur_val_total < best_val_loss:
-        best_val_loss     = cur_val_total
-        state_to_save     = model.state_dict()
+        best_val_loss = cur_val_total
+        state_to_save = model.state_dict()
         torch.save(state_to_save, "checkpoints/unet_best.pth")
         print("  -> Nuovo record. Pesi salvati.")
-        patience_counter = 0  # Ripristina la pazienza se la loss migliora
+        # patience_counter = 0
     else:
-        patience_counter += 1
-        print(f"  -> Nessun miglioramento. Early Stopping: {patience_counter}/{PATIENCE}")
-        
-        if patience_counter >= PATIENCE:
-            print(f"\n🛑 Early Stopping attivato! Nessun miglioramento della Val Loss per {PATIENCE} epoche consecutive.")
-            print(f"L'addestramento si interrompe all'epoca {ep}. Pesi migliori conservati.")
-            break
+        # patience_counter += 1
+        # print(f"  -> Nessun miglioramento. Early Stopping: {patience_counter}/{PATIENCE}")
+        # if patience_counter >= PATIENCE:
+        #     print(f"\n🛑 Early Stopping attivato! Nessun miglioramento della Val Loss per {PATIENCE} epoche consecutive.")
+        #     print(f"L'addestramento si interrompe all'epoca {ep}. Pesi migliori conservati.")
+        #     break
+        pass
 
 print("\nAddestramento Completato.")
 
