@@ -96,22 +96,33 @@ best_val_loss = float('inf')
 # patience_counter = 0
 
 
+# ==========================================================================
+# AGGIORNAMENTO FUNZIONE DI LOSS: BILANCIAMENTO DEL PAYLOAD (PROB. APPROX)
+# ==========================================================================
 def compute_loss(reconstructed_imgs, logits_reconstructed,
                  clean_imgs, w_img, w_adv):
     """
     Due componenti:
-    - loss_img : L1 pixel tra immagine ricostruita e clean (fidelity).
-    - loss_adv : L1 tra bit-logit attaccati e quelli di un'immagine pulita
-                 (il messaggio estratto deve sembrare quello di un'immagine senza WM).
+    - loss_img : MSE pixel tra immagine ricostruita e clean (fidelity).
+    - loss_adv : Bilanciamento entropico dei logiti. Approssimiamo la funzione
+                 sign(z) tramite una sigmoide. Un'immagine non marcata (o con 
+                 watermark distrutto) mostra bit non polarizzati, la cui probabilità
+                 media deve convergere a 0.5 (massima incertezza/rumore bianco).
     """
+    # 1. Fidelity Loss (Invariata)
     loss_img = criterion_img(reconstructed_imgs, clean_imgs)
 
-    with torch.no_grad():
-        out_clean        = detector.detect(clean_imgs)
-        logits_clean_ref = out_clean["preds"][:, 1:].detach()
+    # 2. Nuova Adversarial Loss basata sul bilanciamento probabilistico dei bit
+    # Trasformiamo i logiti grezzi estratti in probabilità nell'intervallo [0, 1]
+    probabilities = torch.sigmoid(logits_reconstructed)
+    
+    # Calcoliamo la probabilità media dei bit per ciascun elemento del batch (dim=1)
+    batch_bit_balance = probabilities.mean(dim=1)
+    
+    # La loss penalizza lo scostamento dal valore di perfetto bilanciamento stocastico (0.5)
+    loss_adv = torch.abs(batch_bit_balance - 0.5).mean()
 
-    loss_adv = criterion_bits(logits_reconstructed, logits_clean_ref)
-
+    # Ritorno della loss combinata
     total = w_img * loss_img + w_adv * loss_adv
     return total, loss_img, loss_adv
 
